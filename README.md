@@ -22,7 +22,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | --- | --- |
 | `flsun_timelapse` | [FLSUN_Timelapse](https://github.com/DIEHARDave/FLSUN_Timelapse): timelapse videos in Mainsail and Fluidd |
 | `flsun_remote_screen` | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen): view and control the touchscreen from a browser |
-| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen, from HelixScreen's own releases |
+| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen, from HelixScreen's own releases. **Coming soon:** listed once HelixScreen's main branch supports the T1 Pro. |
 
 To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
@@ -48,8 +48,8 @@ From the console in Mainsail or Fluidd:
 
 ```
 LIST_PLUGINS
-ENABLE_PLUGIN NAME=helixscreen
-DISABLE_PLUGIN NAME=helixscreen
+ENABLE_PLUGIN NAME=flsun_timelapse
+DISABLE_PLUGIN NAME=flsun_timelapse
 ```
 
 The macros set the plugin to `yes` or `no` in **flsun_plugins.cfg**, which you can also edit directly in the config files:
@@ -57,13 +57,10 @@ The macros set the plugin to `yes` or `no` in **flsun_plugins.cfg**, which you c
 ```ini
 [plugins]
 flsun_timelapse: yes
-helixscreen: no
-
-[helixscreen]
-channel: beta
+flsun_remote_screen: no
 ```
 
-When the file changes, the printer installs or removes plugins within a few seconds. If a print is running, it waits until the print finishes, because installers restart Klipper or the screen. Progress is logged in **logs/flsun_updater.log**. Plugins that were installed before FLSUN_Updater are detected and start as `yes`. Each `type: web` plugin also gets a section with its release `channel` (`stable` or `beta`).
+When the file changes, the printer installs or removes plugins within a few seconds. If a print is running, it waits until the print finishes, because installers restart Klipper or the screen. Progress is logged in **logs/flsun_updater.log**. Plugins that were installed before FLSUN_Updater are detected and start as `yes`. Each `type: web` plugin also gets a section, such as `[helixscreen]`, with its release `channel` (`stable` or `beta`).
 
 Installed plugins, FLSUN_Updater itself and Mainsail show up in the update manager (**Machine** page in Mainsail, **Settings → Software Updates** in Fluidd), where you update them as usual. When FLSUN_Updater updates and the list has new plugins, they're added to `flsun_plugins.cfg` set to `no`.
 
