@@ -21,6 +21,17 @@
             "install": "install.sh",
             "uninstall": "uninstall.sh",
             "update_manager": "plugin"
+        },
+        {
+            "name": "flsun_helixscreen",
+            "title": "FLSUN_HelixScreen",
+            "description": "HelixScreen on the touchscreen in place of FLSun's stock screen, updated from the update manager",
+            "repo": "https://github.com/DIEHARDave/FLSUN_HelixScreen.git",
+            "branch": "main",
+            "path": "~/FLSUN_HelixScreen",
+            "install": "install.sh",
+            "uninstall": "uninstall.sh",
+            "update_manager": "plugin"
         }
     ]
 }

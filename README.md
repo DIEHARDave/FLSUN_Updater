@@ -19,6 +19,7 @@ FLSun's system image can't reach GitHub as shipped, and its update manager can't
 | --- | --- |
 | [FLSUN_Timelapse](https://github.com/DIEHARDave/FLSUN_Timelapse) | Timelapse videos in Mainsail and Fluidd, based on moonraker-timelapse |
 | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen) | View and control the touchscreen from a browser |
+| [FLSUN_HelixScreen](https://github.com/DIEHARDave/FLSUN_HelixScreen) | [HelixScreen](https://github.com/prestonbrown/helixscreen) on the touchscreen in place of FLSun's stock screen |
 
 The list lives in [plugins.json](plugins.json). To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
