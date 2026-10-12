@@ -3,6 +3,9 @@
 Mainsail has port 80, so Fluidd gets its own nginx site on port 81, written
 from fluidd_nginx.conf. Moonraker serves both, and both read the same
 cameras from Moonraker.
+
+Every Fluidd update replaces its config.json, which drops FLSUN_theme's
+FLSUN preset, so this hook puts it back while that plugin is installed.
 """
 
 import os
@@ -15,6 +18,8 @@ PORT = 81
 SITE = "/etc/nginx/sites-available/fluidd"
 ENABLED = "/etc/nginx/sites-enabled/fluidd"
 MARKER = "Written by FLSUN_Updater's fluidd hook"
+THEME_REPO = os.path.expanduser("~pi/FLSUN_theme")
+THEME_LINK = os.path.expanduser("~pi/printer_data/config/.fluidd-theme")
 
 
 def _render(spec):
@@ -73,16 +78,33 @@ def _ensure_site(spec, log):
     _reload(log)
 
 
+def _ensure_theme_preset(spec, log):
+    """Adds FLSUN_theme's preset if that plugin is installed."""
+    if os.path.realpath(THEME_LINK) != os.path.join(THEME_REPO, "fluidd"):
+        return
+    res = subprocess.run(
+        ["python3", os.path.join(THEME_REPO, "fluidd_preset.py"), "add",
+         spec["abspath"]],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        universal_newlines=True)
+    for line in res.stdout.strip().splitlines():
+        log("  | " + line)
+    if res.returncode != 0:
+        log("WARNING: couldn't add FLSUN_theme's preset to Fluidd")
+
+
 # ------------------------------------------------------------ entry points
 
 def after_install(spec, log):
     """After a new install, an update or a rollback."""
     _ensure_site(spec, log)
+    _ensure_theme_preset(spec, log)
 
 
 def at_boot(spec, log):
     """On every FLSUN_Updater run while installed."""
     _ensure_site(spec, log)
+    _ensure_theme_preset(spec, log)
 
 
 def before_remove(spec, log):
