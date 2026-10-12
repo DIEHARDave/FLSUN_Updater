@@ -34,7 +34,7 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: It has an install.sh and an uninstall.sh that run as the pi user
+        - label: Its install.sh and uninstall.sh, if it has them, run as the pi user
         - label: It has been tested on a FLSun T1 Pro
   - type: textarea
     id: notes

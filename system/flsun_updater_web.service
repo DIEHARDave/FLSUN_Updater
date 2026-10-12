@@ -1,0 +1,7 @@
+[Unit]
+Description=FLSUN_Updater: install a release Moonraker downloaded
+
+[Service]
+# Started by FLSUN_Updater's Moonraker component for type: web updates.
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/pi/FLSUN_Updater/flsun_updater.py web-apply

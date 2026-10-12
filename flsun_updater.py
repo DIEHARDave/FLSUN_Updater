@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """FLSUN_Updater for the FLSun T1 Pro.
 
-Installs and removes the plugins listed in plugins.json to match the choices
-in ~/printer_data/config/flsun_plugins.cfg, and repairs the parts of FLSun's
-system image that stop Moonraker's update manager from working.
+Installs and removes the plugins listed in extra_plugins.moonraker.conf to
+match the choices in ~/printer_data/config/flsun_plugins.cfg, adds their
+update manager entries, and repairs the parts of FLSun's system image that
+stop Moonraker's update manager from working.
 
-    flsun_updater.py run    Repair, then install or remove plugins. Needs
-                            root. The flsun_updater service runs this at
-                            boot, whenever flsun_plugins.cfg is saved, and
-                            after Moonraker updates FLSUN_Updater.
-    flsun_updater.py list   Show the plugins and which are installed.
+    flsun_updater.py run        Repair, then install or remove plugins.
+                                Needs root. The flsun_updater service runs
+                                this at boot, whenever flsun_plugins.cfg is
+                                saved, and after Moonraker updates
+                                FLSUN_Updater.
+    flsun_updater.py web-apply  Install the releases Moonraker downloaded
+                                for type: web plugins. Needs root; run by
+                                the flsun_updater_web service.
+    flsun_updater.py list       Show the plugins and which are installed.
 
 Standard library only: the T1 Pro has Python 3.7 and no pip.
 """
@@ -19,6 +24,7 @@ import configparser
 import contextlib
 import fcntl
 import glob
+import importlib.util
 import json
 import os
 import pwd
@@ -32,9 +38,11 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 REPO_DIR = os.path.dirname(os.path.realpath(__file__))
-REGISTRY = os.path.join(REPO_DIR, "plugins.json")
+REGISTRY = os.path.join(REPO_DIR, "extra_plugins.moonraker.conf")
+HOOKS_DIR = os.path.join(REPO_DIR, "hooks")
 USER = "pi"
 USER_PW = pwd.getpwnam(USER)
 HOME = USER_PW.pw_dir
@@ -45,17 +53,25 @@ SELECTION = os.path.join(CONFIG_DIR, "flsun_plugins.cfg")
 GENERATED = os.path.join(CONFIG_DIR, "flsun_updater_plugins.conf")
 ASVC = os.path.join(DATA_DIR, "moonraker.asvc")
 STATE = os.path.join(DATA_DIR, "flsun_updater_state.json")
+STAGING = os.path.join(DATA_DIR, "flsun_updater")
 LOG = os.path.join(DATA_DIR, "logs", "flsun_updater.log")
+COMPONENT_SRC = os.path.join(REPO_DIR, "moonraker", "flsun_plugins.py")
+COMPONENT_LINK = os.path.join(HOME, "moonraker", "moonraker", "components",
+                              "flsun_plugins.py")
+MACROS_SRC = os.path.join(REPO_DIR, "klipper", "flsun_updater_macros.cfg")
+MACROS_LINK = os.path.join(CONFIG_DIR, "flsun_updater_macros.cfg")
 # Web clients that Moonraker updates by deleting and re-extracting the folder.
 WEB_CLIENTS = [os.path.join(HOME, "mainsail"), os.path.join(HOME, "fluidd")]
 # sudo ignores files in sudoers.d whose names contain a dot, so the temporary
 # name is inert until the rename.
 SUDOERS = "/etc/sudoers.d/zz-flsun-updater"
 LOCK = "/run/flsun_updater.lock"
+WEB_LOCK = "/run/flsun_updater_web.lock"
 MOONRAKER = "http://127.0.0.1:7125"
 # FLSun's image boots with a stale clock; a time before this isn't real.
 CLOCK_VALID_AFTER = 1790000000  # 2026-09-21
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 USER_ENV = {
     "HOME": HOME,
@@ -67,6 +83,7 @@ USER_ENV = {
 }
 
 _log_file = None
+_collect = None  # web-apply returns its log lines to Moonraker
 
 
 def log(msg):
@@ -75,6 +92,8 @@ def log(msg):
     if _log_file is not None:
         _log_file.write(line + "\n")
         _log_file.flush()
+    if _collect is not None:
+        _collect.append(msg)
 
 
 def open_log():
@@ -84,6 +103,12 @@ def open_log():
         os.replace(LOG, LOG + ".1")
     _log_file = open(LOG, "a")
     os.chown(LOG, USER_PW.pw_uid, USER_PW.pw_gid)
+
+
+def require_root(command):
+    if os.geteuid() != 0:
+        sys.exit("flsun_updater.py %s needs root: sudo %s %s"
+                 % (command, sys.argv[0], command))
 
 
 def give_to_user(path):
@@ -102,6 +127,13 @@ def write_if_changed(path, text):
         f.write(text)
     give_to_user(path)
     return True
+
+
+def run(cmd):
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         universal_newlines=True)
+    if res.returncode != 0:
+        raise RuntimeError("%s failed: %s" % (" ".join(cmd), res.stdout.strip()))
 
 
 def run_logged(cmd, cwd=None, as_user=False):
@@ -125,11 +157,20 @@ def run_logged(cmd, cwd=None, as_user=False):
 
 
 def user_output(cmd, cwd):
+    # As pi, so that git trusts pi's checkouts.
+    if os.geteuid() != USER_PW.pw_uid:
+        cmd = ["runuser", "-u", USER, "--"] + cmd
     res = subprocess.run(
-        ["runuser", "-u", USER, "--"] + cmd, cwd=cwd, env=USER_ENV,
+        cmd, cwd=cwd, env=USER_ENV,
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, universal_newlines=True)
     return res.stdout.strip() if res.returncode == 0 else None
+
+
+def take_lock(path):
+    lock = open(path, "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)  # one at a time; others wait
+    return lock
 
 
 # ---------------------------------------------------------------- Moonraker
@@ -161,7 +202,7 @@ def print_state():
 
 
 def wait_until_idle():
-    """Plugin installers restart Klipper, which would kill a print."""
+    """Plugin installers restart Klipper or the screen."""
     waiting = False
     while print_state() in ("printing", "paused"):
         if not waiting:
@@ -271,6 +312,49 @@ def fix_refresh_times():
             time.sleep(30)
 
 
+def ensure_units():
+    """Installs FLSUN_Updater's systemd units from the repo, so that an
+    update from the update manager also brings new or changed units."""
+    changed = False
+    for unit in ("flsun_updater.service", "flsun_updater.path",
+                 "flsun_updater_web.service"):
+        src = os.path.join(REPO_DIR, "system", unit)
+        dst = os.path.join("/etc/systemd/system", unit)
+        with open(src) as f:
+            text = f.read()
+        try:
+            with open(dst) as f:
+                if f.read() == text:
+                    continue
+        except FileNotFoundError:
+            pass
+        shutil.copyfile(src, dst)
+        os.chmod(dst, 0o644)
+        log("Installed " + unit)
+        changed = True
+    if changed:
+        subprocess.call(["systemctl", "daemon-reload"])
+
+
+def ensure_component():
+    """Links the Moonraker component behind the plugin macros and type: web
+    updates. Returns True if Moonraker needs a restart to load it."""
+    if not os.path.isdir(os.path.dirname(COMPONENT_LINK)):
+        log("WARNING: Moonraker's components folder not found; the plugin "
+            "macros and type: web updates won't work")
+        return False
+    if os.path.realpath(COMPONENT_LINK) == COMPONENT_SRC:
+        return False
+    tmp = COMPONENT_LINK + ".tmp"
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(tmp)
+    os.symlink(COMPONENT_SRC, tmp)
+    os.lchown(tmp, USER_PW.pw_uid, USER_PW.pw_gid)
+    os.replace(tmp, COMPONENT_LINK)
+    log("Linked the Moonraker component")
+    return True
+
+
 # ------------------------------------------------------------------ plugins
 
 def expand(path):
@@ -279,26 +363,64 @@ def expand(path):
     return path
 
 
+def plugin_url(p):
+    if p["kind"] == "web":
+        return "https://github.com/%s (releases)" % p["repo"]
+    return re.sub(r"\.git$", "", p["repo"])
+
+
 def load_registry():
+    """Reads extra_plugins.moonraker.conf: Moonraker [update_manager]
+    sections, plus flsun_* options that only FLSUN_Updater reads."""
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
     with open(REGISTRY) as f:
-        entries = json.load(f)["plugins"]
-    plugins, seen = [], set()
-    for entry in entries:
-        name = entry.get("name", "")
-        path = os.path.realpath(expand(entry.get("path", "")))
-        um = entry.get("update_manager")
-        if (not NAME_RE.match(name) or name in seen or name == "flsun_updater"
-                or not entry.get("repo") or not path.startswith(HOME + "/")
-                or not (um == "plugin" or isinstance(um, dict))
-                or (um == "plugin" and not entry.get("uninstall"))):
-            log("Skipping an invalid plugins.json entry: %r" % name)
+        parser.read_file(f)
+    plugins = []
+    for section in parser.sections():
+        m = re.match(r"update_manager\s+(\S+)$", section)
+        o = dict(parser.items(section))
+        name = m.group(1) if m else ""
+        path = os.path.realpath(expand(o.get("path", "")))
+        hook = o.get("flsun_hook")
+        kind = {"git_repo": "git", "web": "web"}.get(o.get("type"))
+        if kind == "git":
+            repo, ok = o.get("origin", ""), bool(o.get("origin"))
+        else:
+            repo = o.get("repo", "")
+            ok = (bool(GITHUB_REPO_RE.match(repo))
+                  and bool(o.get("asset_name"))
+                  and o.get("channel", "stable") in ("stable", "beta"))
+        if (not m or not NAME_RE.match(name) or name == "flsun_updater"
+                or kind is None or not ok or not path.startswith(HOME + "/")
+                or o.get("flsun_owner", USER) not in (USER, "root")
+                or (hook and not os.path.isfile(
+                    os.path.join(HOOKS_DIR, hook + ".py")))):
+            log("Skipping an invalid entry in %s: [%s]"
+                % (os.path.basename(REGISTRY), section))
             continue
-        seen.add(name)
-        p = dict(entry)
-        p["abspath"] = path
-        p.setdefault("title", name)
-        p.setdefault("branch", "main")
-        plugins.append(p)
+        plugins.append({
+            "kind": kind,
+            "name": name,
+            "title": o.get("flsun_title", name),
+            "description": o.get("flsun_description", ""),
+            "repo": repo,
+            "path": o["path"],
+            "abspath": path,
+            "branch": o.get("primary_branch", "master"),
+            "channel": o.get("channel", "stable"),
+            "asset_name": o.get("asset_name"),
+            "persistent_files": [
+                pf.strip().strip("/") for pf in
+                o.get("persistent_files", "").splitlines() if pf.strip()],
+            "install": o.get("flsun_install", "install.sh"),
+            "uninstall": o.get("flsun_uninstall", "uninstall.sh"),
+            "owner": o.get("flsun_owner", USER),
+            "hook": hook,
+            # What Moonraker gets: the section without the flsun_ options.
+            "moonraker": [(k, v) for k, v in parser.items(section)
+                          if not k.startswith("flsun_")],
+        })
     return plugins
 
 
@@ -333,21 +455,37 @@ def has_update_section(name):
     return False
 
 
+def release_info(root):
+    try:
+        with open(os.path.join(root, "release_info.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
 def is_installed(p, state):
     if p["name"] in state["installed"]:
         return True
-    # Installed by hand, before FLSUN_Updater: its installer added its entry.
-    return p["update_manager"] == "plugin" and has_update_section(p["name"])
+    if p["kind"] == "web":
+        # Installed by hand from the same project's release.
+        info = release_info(p["abspath"]) or {}
+        found = "%s/%s" % (info.get("project_owner"), info.get("project_name"))
+        return found.lower() == p["repo"].lower()
+    # Cloned by hand, before FLSUN_Updater.
+    if not os.path.isdir(os.path.join(p["abspath"], ".git")):
+        return False
+    origin = user_output(["git", "remote", "get-url", "origin"], p["abspath"])
+    return origin is not None and same_repo(origin, p["repo"])
 
 
 def read_selection():
-    """Returns {name: bool}, or None if the file doesn't exist yet.
-    Raises configparser.Error if the file can't be read."""
+    """Returns ({name: bool}, {name: channel}), or (None, {}) if the file
+    doesn't exist yet. Raises configparser.Error if it can't be read."""
     if not os.path.exists(SELECTION):
-        return None
-    parser = configparser.ConfigParser()
+        return None, {}
+    parser = configparser.ConfigParser(interpolation=None)
     parser.read(SELECTION)
-    choices = {}
+    choices, channels = {}, {}
     if parser.has_section("plugins"):
         for name in parser.options("plugins"):
             try:
@@ -355,10 +493,17 @@ def read_selection():
             except ValueError:
                 log("%s: '%s' is not yes or no; leaving it as it is"
                     % (os.path.basename(SELECTION), name))
-    return choices
+    for section in parser.sections():
+        value = parser.get(section, "channel", fallback="").strip().lower()
+        if value in ("stable", "beta"):
+            channels[section] = value
+        elif value:
+            log("%s: [%s] channel must be stable or beta"
+                % (os.path.basename(SELECTION), section))
+    return choices, channels
 
 
-def write_selection(plugins, choices):
+def write_selection(plugins, choices, channels):
     lines = [
         "# FLSUN_Updater: choose which plugins are installed on this printer.",
         "# Set a plugin to yes to install it or no to remove it, then save.",
@@ -371,13 +516,20 @@ def write_selection(plugins, choices):
         "[plugins]",
     ]
     for p in plugins:
-        url = re.sub(r"\.git$", "", p["repo"])
         lines += [
             "# %s: %s" % (p["title"], p.get("description", "")),
-            "# " + url,
+            "# " + plugin_url(p),
             "%s: %s" % (p["name"], "yes" if choices[p["name"]] else "no"),
             "",
         ]
+    for p in plugins:
+        if p["kind"] == "web":
+            lines += [
+                "[%s]" % p["name"],
+                "# Release channel for %s: stable or beta." % p["title"],
+                "channel: %s" % channels[p["name"]],
+                "",
+            ]
     write_if_changed(SELECTION, "\n".join(lines))
 
 
@@ -407,35 +559,207 @@ def same_repo(a, b):
     return norm(a) == norm(b)
 
 
+# ---------------------------------------------------- plugins from our repos
+
 def run_plugin_script(p, key):
+    """Runs the repo's install or uninstall script, if it has one. Plugins
+    that only need to be cloned have none, as in Zmod."""
     script = p.get(key)
-    if not script:
+    if not script or script == "none":
         return True
     path = os.path.join(p["abspath"], script)
     if not os.path.isfile(path):
-        log("  %s has no %s" % (p["title"], script))
-        return False
+        return True
+    log("  running %s" % script)
     cmd = [path] if os.access(path, os.X_OK) else ["bash", path]
-    return run_logged(cmd + list(p.get(key + "_args", [])),
-                      cwd=p["abspath"], as_user=True)
+    with plugin_sudo():
+        return run_logged(cmd, cwd=p["abspath"], as_user=True)
 
 
-def install_plugin(p, state):
-    log("Installing %s" % p["title"])
+def install_git_plugin(p, state):
     path = p["abspath"]
     if not os.path.exists(path):
         if not run_logged(["git", "clone", "--branch", p["branch"], "--",
                            p["repo"], path], cwd=HOME, as_user=True):
             log("  could not download %s" % p["repo"])
-            return
+            return False
     else:
         origin = user_output(["git", "remote", "get-url", "origin"], path)
         if origin is None or not same_repo(origin, p["repo"]):
             log("  %s exists but is not a copy of %s; move it out of the way"
                 % (path, p["repo"]))
-            return
-    if not run_plugin_script(p, "install"):
-        log("  %s's installer failed; it will be tried again at the next "
+            return False
+    return run_plugin_script(p, "install")
+
+
+def remove_git_plugin(p):
+    if os.path.isdir(p["abspath"]):
+        if not run_plugin_script(p, "uninstall"):
+            return False
+        shutil.rmtree(p["abspath"])
+    return True
+
+
+# ------------------------------------------- plugins from others' releases
+
+def load_hook(p):
+    if not p.get("hook"):
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "flsun_hook_" + p["hook"], os.path.join(HOOKS_DIR, p["hook"] + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def call_hook(p, func, *args):
+    module = load_hook(p)
+    if module is not None and hasattr(module, func):
+        getattr(module, func)(p, *(args + (log,)))
+
+
+def find_release(p, channel):
+    """Returns (tag, download url) of the newest release on the channel
+    that has the plugin's asset, or None."""
+    req = urllib.request.Request(
+        "https://api.github.com/repos/%s/releases?per_page=30" % p["repo"],
+        headers={"Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        releases = json.loads(resp.read().decode())
+    for rel in releases:
+        if rel.get("draft") or (rel.get("prerelease") and channel == "stable"):
+            continue
+        for asset in rel.get("assets", []):
+            if asset.get("name") == p["asset_name"]:
+                return rel["tag_name"], asset["browser_download_url"]
+    return None
+
+
+def ensure_staging():
+    os.makedirs(STAGING, exist_ok=True)
+    give_to_user(STAGING)
+
+
+def copy_item(src, dst):
+    if os.path.isdir(src) and not os.path.islink(src):
+        shutil.copytree(src, dst, symlinks=True)
+    else:
+        shutil.copy2(src, dst, follow_symlinks=False)
+
+
+def remove_item(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    elif os.path.lexists(path):
+        os.remove(path)
+
+
+def extract_zip(zip_path, dest):
+    """Like zipfile's extractall, but keeps the files' permissions."""
+    real_dest = os.path.realpath(dest)
+    with zipfile.ZipFile(zip_path) as zf:
+        for info in zf.infolist():
+            target = os.path.realpath(os.path.join(dest, info.filename))
+            if not target.startswith(real_dest + os.sep):
+                raise RuntimeError("unsafe path in the release: "
+                                   + info.filename)
+            zf.extract(info, dest)
+            mode = (info.external_attr >> 16) & 0o777
+            if mode and not info.is_dir():
+                os.chmod(target, mode)
+
+
+def apply_release(p, zip_path):
+    """Installs a release zip into the plugin's folder, keeping its
+    persistent files and the previous version in <path>.old."""
+    root = p["abspath"]
+    new, old = root + ".new", root + ".old"
+    remove_item(new)
+    os.makedirs(new)
+    try:
+        extract_zip(zip_path, new)
+        info = release_info(new)
+        if info is None:
+            raise RuntimeError("the release has no release_info.json")
+        log("Installing %s %s" % (p["title"], info.get("version", "?")))
+        if os.path.isdir(root):
+            for pf in p["persistent_files"]:
+                src = os.path.join(root, pf)
+                if os.path.lexists(src):
+                    dst = os.path.join(new, pf)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    remove_item(dst)
+                    copy_item(src, dst)
+            call_hook(p, "post_extract", root, new)
+        if p["owner"] == "root":
+            run(["chown", "-R", "root:root", new])
+            run(["chmod", "-R", "go-w", new])
+        else:
+            run(["chown", "-R", "%s:%s" % (USER, USER), new])
+    except Exception:
+        remove_item(new)
+        raise
+    remove_item(old)
+    if os.path.exists(root):
+        os.rename(root, old)
+    os.rename(new, root)
+    call_hook(p, "after_install")
+
+
+def install_web_plugin(p, state, channel):
+    if is_installed(p, state):
+        # Adopt an install made by hand from the same project's release.
+        log("  found %s %s in %s" % (
+            p["title"], (release_info(p["abspath"]) or {}).get("version", "?"),
+            p["abspath"]))
+        call_hook(p, "at_boot")
+        return True
+    if os.path.exists(p["abspath"]):
+        log("  %s exists but is not %s; move it out of the way"
+            % (p["abspath"], p["title"]))
+        return False
+    try:
+        found = find_release(p, channel)
+    except (OSError, ValueError) as e:
+        log("  could not check %s's releases: %s" % (p["repo"], e))
+        return False
+    if found is None:
+        log("  %s has no %s release with %s yet"
+            % (p["repo"], channel, p["asset_name"]))
+        return False
+    tag, url = found
+    ensure_staging()
+    zip_path = os.path.join(STAGING, p["name"] + ".zip")
+    log("  downloading %s %s" % (p["title"], tag))
+    try:
+        run(["curl", "-fsSL", "--retry", "3", "-o", zip_path, url])
+        apply_release(p, zip_path)
+    except RuntimeError as e:
+        log("  %s" % e)
+        return False
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(zip_path)
+    return True
+
+
+def remove_web_plugin(p):
+    call_hook(p, "before_remove")
+    for path in (p["abspath"], p["abspath"] + ".new", p["abspath"] + ".old"):
+        remove_item(path)
+    return True
+
+
+# ---------------------------------------------------------------- the sync
+
+def install_plugin(p, state, channel):
+    log("Installing %s" % p["title"])
+    if p["kind"] == "web":
+        ok = install_web_plugin(p, state, channel)
+    else:
+        ok = install_git_plugin(p, state)
+    if not ok:
+        log("  %s was not installed; it will be tried again at the next "
             "run" % p["title"])
         return
     state["installed"][p["name"]] = {"installed_at": int(time.time())}
@@ -445,39 +769,56 @@ def install_plugin(p, state):
 
 def remove_plugin(p, state):
     log("Removing %s" % p["title"])
-    if os.path.isdir(p["abspath"]) and not run_plugin_script(p, "uninstall"):
+    ok = remove_web_plugin(p) if p["kind"] == "web" else remove_git_plugin(p)
+    if not ok:
         log("  %s's uninstaller failed; leaving it in place" % p["title"])
         return
     state["installed"].pop(p["name"], None)
     save_state(state)
-    if os.path.isdir(p["abspath"]) and p["abspath"] != HOME:
-        shutil.rmtree(p["abspath"])
     log("  %s removed" % p["title"])
 
 
-def write_update_entries(plugins, state):
-    """Writes [update_manager] entries for plugins that don't add their own.
-    Returns True if Moonraker needs a restart to see the change."""
-    blocks, services = [], []
+def render_section(name, options):
+    lines = ["[update_manager %s]" % name]
+    for key, value in options:
+        if "\n" in value.strip():
+            lines.append("%s:" % key)
+            lines += ["    " + v.strip() for v in value.strip().splitlines()]
+        else:
+            lines.append("%s: %s" % (key, value.strip()))
+    return "\n".join(lines) + "\n"
+
+
+def write_update_entries(plugins, state, channels):
+    """Copies the entries of installed plugins into
+    flsun_updater_plugins.conf. Returns True if Moonraker needs a restart to
+    see the change."""
+    blocks, services, web = [], [], []
     for p in plugins:
-        um = p["update_manager"]
-        if not isinstance(um, dict) or p["name"] not in state["installed"]:
+        if not is_installed(p, state):
             continue
         if has_update_section(p["name"]):
-            log("%s already has an update manager entry; not adding another"
-                % p["title"])
+            # e.g. our FLSUN_ plugins' installers add their own entry.
             continue
-        options = {
-            "type": "git_repo",
-            "path": p["path"],
-            "origin": p["repo"],
-            "primary_branch": p["branch"],
-        }
-        options.update(um)
-        blocks.append("[update_manager %s]\n%s\n" % (p["name"], "".join(
-            "%s: %s\n" % (k, v) for k, v in options.items())))
-        if p["name"] in str(options.get("managed_services", "")).split():
-            services.append(p["name"])
+        options = list(p["moonraker"])
+        if p["kind"] == "web":
+            options = [(k, channels[p["name"]] if k == "channel" else v)
+                       for k, v in options]
+            if not any(k == "channel" for k, _ in options):
+                options.insert(1, ("channel", channels[p["name"]]))
+            web.append(p["name"])
+        else:
+            opts = dict(options)
+            svcs = opts.get("managed_services", "")
+            is_service = opts.get("is_system_service", "true").lower()
+            if p["name"] in svcs.split() or (
+                    not svcs and is_service in ("true", "yes", "1")):
+                services.append(p["name"])
+        blocks.append(render_section(p["name"], options))
+    # The component behind the plugin macros, which also makes type: web
+    # entries work on FLSun's Moonraker.
+    blocks.append("[flsun_plugins]\n%s" % (
+        "web_clients: %s\n" % " ".join(web) if web else ""))
     entries = "\n".join(blocks)
     try:
         with open(GENERATED) as f:
@@ -486,8 +827,8 @@ def write_update_entries(plugins, state):
         old_entries = None
     write_if_changed(GENERATED,
                      "# Written by FLSUN_Updater on every run; don't edit. "
-                     "Update\n# manager entries for plugins that don't add "
-                     "their own.\n\n" + entries)
+                     "Update\n# manager entries for the plugins it installs."
+                     "\n\n" + entries)
     changed = old_entries != re.sub(r"^\n", "", entries, flags=re.M)
     if services and os.path.exists(ASVC):
         with open(ASVC) as f:
@@ -515,58 +856,104 @@ def ensure_include():
     return True
 
 
+def ensure_macros():
+    """Links the plugin macros into Klipper's config and includes them from
+    printer.cfg. Returns True if Klipper needs a restart to load them."""
+    printer_cfg = os.path.join(CONFIG_DIR, "printer.cfg")
+    changed = False
+    if os.path.realpath(MACROS_LINK) != MACROS_SRC:
+        tmp = MACROS_LINK + ".tmp"
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(tmp)
+        os.symlink(MACROS_SRC, tmp)
+        os.lchown(tmp, USER_PW.pw_uid, USER_PW.pw_gid)
+        os.replace(tmp, MACROS_LINK)
+        changed = True
+    include = "[include %s]" % os.path.basename(MACROS_LINK)
+    with open(printer_cfg) as f:
+        text = f.read()
+    if not any(line.strip() == include for line in text.splitlines()):
+        shutil.copy2(printer_cfg, printer_cfg + ".flsun_updater.bak")
+        # Above SAVE_CONFIG's block, which must stay last.
+        marker = "#*# <---------------------- SAVE_CONFIG ---------------------->"
+        if marker in text:
+            head, tail = text.split(marker, 1)
+            text = "%s%s\n\n%s%s" % (head.rstrip("\n") + "\n\n", include,
+                                     marker, tail)
+        else:
+            text = "%s%s\n" % (text if text.endswith("\n") else text + "\n",
+                               include)
+        with open(printer_cfg, "w") as f:
+            f.write(text)
+        give_to_user(printer_cfg)
+        log("Added the plugin macros to printer.cfg")
+        changed = True
+    return changed
+
+
 def sync_plugins():
     plugins = load_registry()
     state = load_state()
     try:
-        selection = read_selection()
+        selection, chosen_channels = read_selection()
     except configparser.Error as e:
         log("Can't read %s, so no plugins were changed: %s"
             % (os.path.basename(SELECTION), e))
         return
     installed = {p["name"]: is_installed(p, state) for p in plugins}
-    choices = {}
+    choices, channels = {}, {}
     for p in plugins:
         wanted = None if selection is None else selection.get(p["name"])
         choices[p["name"]] = installed[p["name"]] if wanted is None else wanted
+        if p["kind"] == "web":
+            channels[p["name"]] = chosen_channels.get(p["name"], p["channel"])
     for name in sorted(set(selection or {}) - set(choices)):
         log("%s: '%s' is not in the plugin list; ignored"
             % (os.path.basename(SELECTION), name))
-    write_selection(plugins, choices)
+    write_selection(plugins, choices, channels)
 
     todo = [p for p in plugins if choices[p["name"]] != installed[p["name"]]]
     if todo:
         wait_moonraker(300)
         wait_until_idle()
-        with plugin_sudo():
-            for p in todo:
-                if choices[p["name"]]:
-                    install_plugin(p, state)
-                else:
-                    remove_plugin(p, state)
+        for p in todo:
+            if choices[p["name"]]:
+                install_plugin(p, state, channels.get(p["name"]))
+            else:
+                remove_plugin(p, state)
     else:
         log("Plugins match flsun_plugins.cfg")
+    # A FLSun firmware update can undo a hook's changes, e.g. the screen's
+    # boot script.
+    for p in plugins:
+        if (p["kind"] == "web" and p not in todo
+                and is_installed(p, state)):
+            call_hook(p, "at_boot")
 
-    restart = write_update_entries(plugins, state)
+    restart = write_update_entries(plugins, state, channels)
+    restart = ensure_component() or restart
     restart = ensure_include() or restart
     if restart:
         restart_service("moonraker")
+    if ensure_macros():
+        if print_state() in ("printing", "paused"):
+            log("The plugin macros load at Klipper's next restart")
+        else:
+            restart_service("klipper")
 
 
 # ----------------------------------------------------------------- commands
 
 def cmd_run(_args):
-    if os.geteuid() != 0:
-        sys.exit("flsun_updater.py run needs root: sudo %s run" % sys.argv[0])
-    lock = open(LOCK, "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)  # one run at a time; others wait
+    require_root("run")
+    _lock = take_lock(LOCK)
     open_log()
     log("FLSUN_Updater run started")
     # Left behind if a run was killed part way.
     with contextlib.suppress(FileNotFoundError):
         os.remove(SUDOERS)
-    for step in (fix_hosts, fix_certificates, check_git, fix_web_clients,
-                 sync_plugins, fix_refresh_times):
+    for step in (fix_hosts, fix_certificates, check_git, ensure_units,
+                 fix_web_clients, sync_plugins, fix_refresh_times):
         try:
             step()
         except Exception:
@@ -574,35 +961,77 @@ def cmd_run(_args):
     log("FLSUN_Updater run finished")
 
 
+def cmd_web_apply(_args):
+    """Installs releases that the Moonraker component downloaded. Each
+    request names a plugin; its path and options come from
+    extra_plugins.moonraker.conf, never from the request."""
+    global _collect
+    require_root("web-apply")
+    _lock = take_lock(WEB_LOCK)
+    open_log()
+    plugins = {p["name"]: p for p in load_registry() if p["kind"] == "web"}
+    staging = os.path.realpath(STAGING)
+    for request in sorted(glob.glob(os.path.join(STAGING, "*.request.json"))):
+        _collect = []
+        outcome = {"ok": False}
+        try:
+            with open(request) as f:
+                data = json.load(f)
+            os.remove(request)
+            p = plugins.get(data.get("name"))
+            zip_path = os.path.realpath(data.get("zip", ""))
+            if p is None:
+                raise RuntimeError("%r is not in extra_plugins.moonraker.conf"
+                                   % data.get("name"))
+            if os.path.dirname(zip_path) != staging:
+                raise RuntimeError("the download is not in " + STAGING)
+            log("Update requested: %s %s" % (p["title"], data.get("version")))
+            apply_release(p, zip_path)
+            outcome["ok"] = True
+        except Exception as e:
+            log("Update failed: %s" % e)
+            outcome["error"] = str(e)
+        outcome["log"] = _collect
+        _collect = None
+        name = re.sub(r"\.request\.json$", "", os.path.basename(request))
+        result = os.path.join(STAGING, name + ".result.json")
+        with open(result + ".tmp", "w") as f:
+            json.dump(outcome, f)
+        give_to_user(result + ".tmp")
+        os.replace(result + ".tmp", result)
+
+
 def cmd_list(_args):
     plugins = load_registry()
     state = load_state()
     try:
-        selection = read_selection() or {}
+        selection, channels = read_selection()
     except configparser.Error:
-        selection = {}
-    print("%-22s %-10s %-9s %s" % ("PLUGIN", "INSTALLED", "CHOSEN", "REPO"))
+        selection, channels = {}, {}
+    selection = selection or {}
+    print("%-22s %-10s %-7s %-7s %s"
+          % ("PLUGIN", "INSTALLED", "CHOSEN", "CHANNEL", "SOURCE"))
     for p in plugins:
         chosen = selection.get(p["name"])
-        print("%-22s %-10s %-9s %s" % (
+        print("%-22s %-10s %-7s %-7s %s" % (
             p["name"], "yes" if is_installed(p, state) else "no",
             "-" if chosen is None else ("yes" if chosen else "no"),
-            re.sub(r"\.git$", "", p["repo"])))
+            channels.get(p["name"], p.get("channel", "-")),
+            plugin_url(p)))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("run", help="repair, then install or remove plugins")
+    sub.add_parser("web-apply", help="install downloaded remote releases")
     sub.add_parser("list", help="show the plugins")
     args = parser.parse_args()
-    if args.command == "run":
-        cmd_run(args)
-    elif args.command == "list":
-        cmd_list(args)
-    else:
+    commands = {"run": cmd_run, "web-apply": cmd_web_apply, "list": cmd_list}
+    if args.command not in commands:
         parser.print_help()
         sys.exit(2)
+    commands[args.command](args)
 
 
 if __name__ == "__main__":

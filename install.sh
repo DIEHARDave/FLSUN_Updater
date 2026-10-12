@@ -34,6 +34,7 @@ msg "Installing the updater service"
 chmod 755 "${REPO_DIR}/flsun_updater.py"
 sudo install -m 644 "${REPO_DIR}/system/${SERVICE}.service" "/etc/systemd/system/${SERVICE}.service"
 sudo install -m 644 "${REPO_DIR}/system/${SERVICE}.path" "/etc/systemd/system/${SERVICE}.path"
+sudo install -m 644 "${REPO_DIR}/system/flsun_updater_web.service" /etc/systemd/system/flsun_updater_web.service
 sudo systemctl daemon-reload
 sudo systemctl enable flsun-timesync.service "${SERVICE}.service" "${SERVICE}.path" > /dev/null 2>&1
 sudo systemctl restart "${SERVICE}.path"
@@ -61,8 +62,11 @@ fi
 msg "Restarting Moonraker"
 sudo systemctl restart moonraker
 
+# The run also links the Moonraker component and the plugin macros, and
+# restarts Klipper to load the macros unless a print is running.
 msg "Running the updater"
 sudo /usr/bin/python3 "${REPO_DIR}/flsun_updater.py" run
 
-msg "Done. In Mainsail or Fluidd, open flsun_plugins.cfg in the config files,"
-msg "set the plugins you want to yes, and save."
+msg "Done. Turn plugins on and off with ENABLE_PLUGIN NAME=<plugin> and"
+msg "DISABLE_PLUGIN NAME=<plugin> (LIST_PLUGINS shows them), or by editing"
+msg "flsun_plugins.cfg in Mainsail's or Fluidd's config files."

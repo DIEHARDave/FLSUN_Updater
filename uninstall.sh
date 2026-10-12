@@ -1,6 +1,7 @@
 #!/bin/bash
 # Removes FLSUN_Updater. Plugins it installed stay installed; remove them
-# first by setting them to no in flsun_plugins.cfg if you don't want them.
+# first with DISABLE_PLUGIN NAME=<plugin> if you don't want them.
+# Restarts Klipper, so don't run it during a print.
 
 set -e
 
@@ -17,12 +18,21 @@ warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*"; }
 msg "Removing the updater service"
 sudo systemctl disable --now "${SERVICE}.path" "${SERVICE}.service" > /dev/null 2>&1 || true
 sudo rm -f "/etc/systemd/system/${SERVICE}.path" "/etc/systemd/system/${SERVICE}.service"
+sudo rm -f /etc/systemd/system/flsun_updater_web.service
 sudo rm -f /etc/sudoers.d/zz-flsun-updater
 sudo systemctl daemon-reload
 
 if grep -q '^\[update_manager' "${CONFIG_DIR}/flsun_updater_plugins.conf" 2>/dev/null; then
-    warn "plugins listed in flsun_updater_plugins.conf no longer appear in the update manager"
+    warn "plugins listed in flsun_updater_plugins.conf stay installed but no longer appear in the update manager"
 fi
+
+msg "Removing the plugin macros"
+sed -i '/^\[include flsun_updater_macros\.cfg\]/d' "${CONFIG_DIR}/printer.cfg"
+rm -f "${CONFIG_DIR}/flsun_updater_macros.cfg"
+
+msg "Removing the Moonraker component"
+rm -f "${HOME}/moonraker/moonraker/components/flsun_plugins.py"
+rm -rf "${HOME}/printer_data/flsun_updater"
 
 msg "Removing the Moonraker settings"
 sed -i -e '/^\[include flsun_updater\.conf\]/d' \
@@ -37,7 +47,8 @@ fi
 # clock helps everything else on the printer too, and the other FLSun
 # plugins use the same service.
 
-msg "Restarting Moonraker"
+msg "Restarting Moonraker and Klipper"
 sudo systemctl restart moonraker
+sudo systemctl restart klipper
 
 msg "Done. Delete ~/FLSUN_Updater to finish."
