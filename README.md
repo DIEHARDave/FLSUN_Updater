@@ -65,6 +65,8 @@ When the file changes, the printer installs or removes plugins within a few seco
 
 Installed plugins, FLSUN_Updater itself and Mainsail show up in the update manager (**Machine** page in Mainsail, **Settings → Software Updates** in Fluidd), where you update them as usual. When FLSUN_Updater updates and the list has new plugins, they're added to `flsun_plugins.cfg` set to `no`.
 
+<img src="docs/update-manager.png" alt="Mainsail's Update Manager on a T1 Pro listing flsun_notify, flsun_remote_screen, flsun_timelapse, flsun_updater, Mainsail and the system packages, all up to date" width="600">
+
 From SSH, `~/FLSUN_Updater/flsun_updater.py list` shows the plugins, and `sudo ~/FLSUN_Updater/flsun_updater.py run` applies `flsun_plugins.cfg` and runs the repairs.
 
 ## How it works
