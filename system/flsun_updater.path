@@ -1,0 +1,9 @@
+[Unit]
+Description=Run FLSUN_Updater when flsun_plugins.cfg is saved
+
+[Path]
+PathChanged=/home/pi/printer_data/config/flsun_plugins.cfg
+Unit=flsun_updater.service
+
+[Install]
+WantedBy=multi-user.target

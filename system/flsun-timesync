@@ -1,0 +1,33 @@
+#!/bin/sh
+# Sets the T1 Pro's clock at boot. Installed by the FLSUN_Timelapse and
+# FLSUN_RemoteScreen installers as /usr/local/bin/flsun-timesync, run by
+# flsun-timesync.service.
+#
+# FLSun's /etc/monitor restores the date from /etc/lasttime at boot and was
+# meant to keep that file current, but a syntax error kills its loop, so the
+# clock comes back at the same stale date on every boot. FLSun's rc.local also
+# runs `timedatectl set-ntp true`, which stops ntpd on this image.
+
+LAST_TIME=/etc/lasttime
+
+# Retry for up to two minutes while the network comes up.
+synced=0
+for i in $(seq 1 24); do
+    if ntpdate -u -b time.google.com || ntpdate -u -b pool.ntp.org; then
+        synced=1
+        break
+    fi
+    sleep 5
+done
+[ "$synced" = 1 ] || exit 1
+
+# monitor keeps restarting for a few seconds and restores this file each time.
+date > "$LAST_TIME"
+
+# Keep the clock in sync from here on.
+systemctl restart ntp
+
+# Check once monitor has given up, in case a restore landed between steps.
+sleep 20
+ntpdate -u -b time.google.com || ntpdate -u -b pool.ntp.org || true
+date > "$LAST_TIME"

@@ -1,0 +1,14 @@
+[Unit]
+Description=FLSUN_Updater: system repairs and plugin installs
+Wants=network-online.target
+After=network-online.target flsun-timesync.service moonraker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/FLSUN_Updater/flsun_updater.py run
+# Moonraker restarts this service after updating FLSUN_Updater. Let a run
+# that is installing a plugin finish; the new run waits for it.
+KillMode=none
+
+[Install]
+WantedBy=multi-user.target

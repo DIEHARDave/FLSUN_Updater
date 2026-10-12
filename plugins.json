@@ -1,0 +1,26 @@
+{
+    "plugins": [
+        {
+            "name": "flsun_timelapse",
+            "title": "FLSUN_Timelapse",
+            "description": "Timelapse videos in Mainsail and Fluidd, based on moonraker-timelapse",
+            "repo": "https://github.com/DIEHARDave/FLSUN_Timelapse.git",
+            "branch": "main",
+            "path": "~/FLSUN_Timelapse",
+            "install": "install.sh",
+            "uninstall": "uninstall.sh",
+            "update_manager": "plugin"
+        },
+        {
+            "name": "flsun_remote_screen",
+            "title": "FLSUN_RemoteScreen",
+            "description": "View and control the touchscreen from a browser at http://<printer-ip>/screen/",
+            "repo": "https://github.com/DIEHARDave/FLSUN_RemoteScreen.git",
+            "branch": "main",
+            "path": "~/FLSUN_RemoteScreen",
+            "install": "install.sh",
+            "uninstall": "uninstall.sh",
+            "update_manager": "plugin"
+        }
+    ]
+}

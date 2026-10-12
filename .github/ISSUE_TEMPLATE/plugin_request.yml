@@ -1,0 +1,42 @@
+name: Plugin request
+description: Ask for a plugin to be added to FLSUN_Updater's list
+title: "Plugin request: "
+labels: ["plugin request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Listed plugins install with full `sudo` rights on everyone's printer, so each one is reviewed first. See [docs/adding-plugins.md](https://github.com/DIEHARDave/FLSUN_Updater/blob/main/docs/adding-plugins.md) for what a plugin needs.
+  - type: input
+    id: repo
+    attributes:
+      label: GitHub repo
+      placeholder: https://github.com/someone/FLSUN_Example
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it does
+    validations:
+      required: true
+  - type: dropdown
+    id: author
+    attributes:
+      label: Are you the plugin's author?
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Checklist
+      options:
+        - label: It has an install.sh and an uninstall.sh that run as the pi user
+        - label: It has been tested on a FLSun T1 Pro
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
