@@ -26,7 +26,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): Klipper macros the T1 Pro is missing, starting with pause at layer (`SET_PAUSE_AT_LAYER`) |
 | `flsun_theme` | [FLSUN_theme](https://github.com/DIEHARDave/FLSUN_theme): FLSun's theme (logo and backgrounds) for Mainsail, and as the FLSUN theme in Fluidd; your previous theme folders are backed up and put back when you disable it |
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
-| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen, from HelixScreen's own releases. **Coming soon:** listed once HelixScreen's main branch supports the T1 Pro. |
+| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen (beta). Until HelixScreen's own releases include the T1 Pro, its T1 builds come from [DIEHARDave/helixscreen](https://github.com/DIEHARDave/helixscreen/releases), starting with v1.1.0-beta.8-T1. |
 
 To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
