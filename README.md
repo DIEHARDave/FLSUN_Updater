@@ -16,7 +16,7 @@ FLSun's system image can't reach GitHub as shipped, and its update manager can't
 
 ## Plugins
 
-The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf): Moonraker `[update_manager]` entries in the same format as Zmod's. Most are `git_repo` pointers to a plugin's repo, and `type: web` entries install another project's GitHub releases directly.
+The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf): Moonraker `[update_manager]` entries. Most are `git_repo` pointers to a plugin's repo, and `type: web` entries install another project's GitHub releases directly.
 
 | Plugin | What it does |
 | --- | --- |
