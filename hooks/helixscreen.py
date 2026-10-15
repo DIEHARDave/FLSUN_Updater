@@ -103,12 +103,14 @@ def _stop_screen(install_dir):
 
 
 def _start_screen(log):
-    # Starts the screen as rc.local does at boot. RemainAfterExit keeps the
+    # Starts the screen as rc.local does at boot, after sourcing /etc/profile:
+    # the stock TUI needs its Qt library paths. RemainAfterExit keeps the
     # stock TUI, which its start script backgrounds, from being killed.
     log("Starting the screen")
     subprocess.call([
         "systemd-run", "--unit=" + SCREEN_UNIT, "-p", "RemainAfterExit=yes",
-        "--description=Touchscreen (restarted by FLSUN_Updater)", STARTBOOT],
+        "--description=Touchscreen (restarted by FLSUN_Updater)",
+        "/bin/sh", "-c", '. /etc/profile; exec "$0"', STARTBOOT],
         stdout=subprocess.DEVNULL)
 
 
