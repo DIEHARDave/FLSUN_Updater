@@ -21,7 +21,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | Plugin | What it does |
 | --- | --- |
 | `flsun_timelapse` | [FLSUN_Timelapse](https://github.com/DIEHARDave/FLSUN_Timelapse): timelapse videos in Mainsail with no need for FLSun phone app to retrive videos. |
-| `flsun_remote_screen` | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen): view and control the touchscreen from a browser |
+| `flsun_remote_screen` | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen): view and control the touchscreen from a browser at `http://<printer-ip>/screen/` |
 | `flsun_notify` | [FLSUN_notify](https://github.com/DIEHARDave/FLSUN_notify): print notifications with a camera photo to Telegram, Discord, Matrix and [many more services](https://github.com/caronc/apprise/wiki) |
 | `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): Klipper macros the T1 Pro is missing, starting with pause at layer (`SET_PAUSE_AT_LAYER`) |
 | `flsun_theme` | [FLSUN_theme](https://github.com/DIEHARDave/FLSUN_theme): FLSun's theme (logo and backgrounds) for Mainsail, and as the FLSUN theme in Fluidd; your previous theme folders are backed up and put back when you disable it |
