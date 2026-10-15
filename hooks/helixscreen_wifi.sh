@@ -20,7 +20,9 @@ nm)
         sleep 2
         i=$((i + 2))
     done
+    # /etc/sw's dhclient, and the bare one FLSun's stock screen starts.
     pkill -f '^dhclient wlan0'
+    pkill -f '^/sbin/dhclient$'
     pkill -f '^wpa_supplicant -i wlan0'
     if ! systemctl is-active --quiet wpa_supplicant; then
         systemctl restart wpa_supplicant
