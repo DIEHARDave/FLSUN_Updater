@@ -30,7 +30,14 @@ import re
 import time
 
 from .update_manager.common import Channel
-from .update_manager.web_deploy import WebClientDeploy
+try:
+    # Moonraker 0.10 and newer (FLSUN_moonraker)
+    from .update_manager.net_deploy import NetDeploy as WebBase
+    NET_DEPLOY = True
+except ImportError:
+    # FLSun's 2023 Moonraker
+    from .update_manager.web_deploy import WebClientDeploy as WebBase
+    NET_DEPLOY = False
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
@@ -43,14 +50,42 @@ APPLY_SERVICE = "flsun_updater_web"
 APPLY_TIMEOUT = 15 * 60
 
 
-class FlsunWebDeploy(WebClientDeploy):
+class FlsunWebDeploy(WebBase):
     def __init__(self, config: ConfigHelper, cmd_helper: Any) -> None:
-        super().__init__(config, cmd_helper)
-        self.asset_name: str = config.get("asset_name")
+        if NET_DEPLOY:
+            super().__init__(config)
+        else:
+            super().__init__(config, cmd_helper)
+        # Newer Moonraker resets self.asset_name from release_info.json, so
+        # the configured name is kept separately.
+        self.flsun_asset: str = config.get("asset_name")
+        self.asset_name = self.flsun_asset
+
+    async def initialize(self) -> Dict[str, Any]:
+        storage = await super().initialize()
+        self.asset_name = self.flsun_asset
+        return storage
+
+    # The base class's names for these changed in Moonraker 0.10.
+    def _is_ok(self) -> bool:
+        return getattr(self, "_is_valid", getattr(self, "_valid", False))
+
+    async def _revalidate(self) -> None:
+        if NET_DEPLOY:
+            await self._validate_release_info()
+            self.asset_name = self.flsun_asset
+        else:
+            await self._validate_client_info()
+
+    def _log_info_block(self) -> None:
+        if NET_DEPLOY:
+            self._log_app_info()
+        else:
+            self._log_client_info()
 
     def _pick(self, release: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         for asset in release.get("assets", []):
-            if asset.get("name") == self.asset_name:
+            if asset.get("name") == self.flsun_asset:
                 return asset
         return None
 
@@ -68,7 +103,7 @@ class FlsunWebDeploy(WebClientDeploy):
         return resp.json()
 
     async def _get_remote_version(self) -> None:
-        if not self._valid:
+        if not self._is_ok():
             self.log_info("Invalid installation, aborting remote refresh")
             return
         releases = await self._github(
@@ -89,7 +124,7 @@ class FlsunWebDeploy(WebClientDeploy):
                             asset.get("size", 0))
             self._is_prerelease = release.get("prerelease", False)
             return
-        self.log_info(f"No {self.channel} release has {self.asset_name}")
+        self.log_info(f"No {self.channel} release has {self.flsun_asset}")
 
     async def rollback(self) -> bool:
         if self.rollback_version in ("?", self.version):
@@ -99,27 +134,32 @@ class FlsunWebDeploy(WebClientDeploy):
         asset = self._pick(release) if isinstance(release, dict) else None
         if asset is None:
             raise self.server.error(
-                f"Release {self.rollback_version} has no {self.asset_name}")
+                f"Release {self.rollback_version} has no {self.flsun_asset}")
         return await self.update((asset.get("browser_download_url", "?"),
                                   asset.get("content_type", "?"),
                                   asset.get("size", 0)))
 
     async def update(
-        self, rollback_info: Optional[Tuple[str, str, int]] = None
+        self,
+        rollback_info: Optional[Tuple[str, str, int]] = None,
+        is_recover: bool = False,
+        force_dep_update: bool = False
     ) -> bool:
-        if not self._valid:
+        if not self._is_ok():
             raise self.server.error(
                 f"{self.name}: invalid install detected, aborting update")
         if rollback_info is not None:
+            # Newer Moonraker's recover reinstalls the current version.
             dl_url, content_type, size = rollback_info
-            target = self.rollback_version
-            start_msg = f"Rolling back {self.name} to {target}..."
+            target = self.version if is_recover else self.rollback_version
+            start_msg = (f"Recovering {self.name}..." if is_recover
+                         else f"Rolling back {self.name} to {target}...")
         else:
             if self.remote_version == "?":
                 await self._get_remote_version()
                 if self.remote_version == "?":
                     raise self.server.error(
-                        f"{self.repo}: no release with {self.asset_name}")
+                        f"{self.repo}: no release with {self.flsun_asset}")
             dl_url, content_type, size = self.dl_info
             target = self.remote_version
             if self.version == target:
@@ -157,14 +197,14 @@ class FlsunWebDeploy(WebClientDeploy):
         if not outcome.get("ok"):
             raise self.server.error(
                 f"{self.name}: {outcome.get('error', 'install failed')}")
-        await self._validate_client_info()
-        if self._valid and rollback_info is None:
+        await self._revalidate()
+        if self._is_ok() and rollback_info is None:
             self.rollback_version = current_version
             self.rollback_repo = self.repo
         msg = (f"Rollback Complete: {self.name}" if rollback_info is not None
                else f"Client Update Finished: {self.name}")
         self.cmd_helper.notify_update_response(msg, is_complete=True)
-        self._log_client_info()
+        self._log_info_block()
         self._save_state()
         return True
 
