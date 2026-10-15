@@ -9,6 +9,7 @@ Installer scripts run with full `sudo` rights, so each plugin is reviewed before
 - Debian 10 (buster) on a Cortex-A7 (armhf), 715 MB of RAM.
 - Python 3.7 without pip. Moonraker runs in `~/moonraker-env` (Python 3.7, tornado 6.2).
 - FLSun's own Klipper (1.0.1.5) and an older Moonraker (API 1.3.0). Moonraker is not a git checkout; its components live in `~/moonraker/moonraker/components`.
+- Unless the user turned on FLSUN_moonraker (current upstream Moonraker on Python 3.13, which also puts the compiler back) or FLSUN_klipper (upstream Klipper, which runs `printer_upstream.cfg`; `[include]` lines added to `printer.cfg` are copied over at each start). A plugin should work with both.
 - Mainsail 2.12 or newer at `~/mainsail`, served by nginx from `/etc/nginx/sites-available/mainsail`.
 - Config files in `~/printer_data/config`, logs in `~/printer_data/logs`.
 - FLSUN_Updater has already fixed the clock, certificates and git.
