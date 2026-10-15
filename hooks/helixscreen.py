@@ -3,7 +3,8 @@
 HelixScreen replaces FLSun's stock screen app, which /etc/rc.local starts
 through /home/pi/qt/out_linux/startboot.sh. The hook swaps that script,
 keeps the user's config/ across updates the way HelixScreen's own installer
-does, and restarts the screen.
+does, and restarts the screen. It also hands wlan0 to NetworkManager, which
+HelixScreen's Wi-Fi settings use, and back to FLSun's /etc/sw on removal.
 """
 
 import os
@@ -15,8 +16,10 @@ import time
 
 HOOKS_DIR = os.path.dirname(os.path.realpath(__file__))
 BOOT_SCRIPT = os.path.join(HOOKS_DIR, "helixscreen_startboot.sh")
+WIFI_SCRIPT_SRC = os.path.join(HOOKS_DIR, "helixscreen_wifi.sh")
 QT_DIR = "/home/pi/qt/out_linux"
 STARTBOOT = os.path.join(QT_DIR, "startboot.sh")
+WIFI_SCRIPT = os.path.join(QT_DIR, "helixscreen_wifi.sh")
 STARTBOOT_FLSUN = STARTBOOT + ".flsun"
 STATE_DIR = "/home/pi/helixscreen-state"
 CONFIG_BACKUP = "/home/pi/helixscreen-config.bak"
@@ -122,30 +125,39 @@ def _is_helix_script(path):
         return False
 
 
-def _install_boot_script(log):
-    """Returns True if the boot script changed. FLSun firmware updates can
-    put the stock script back."""
-    if not os.path.isdir(QT_DIR):
-        log("WARNING: %s not found; HelixScreen won't start at boot" % QT_DIR)
-        return False
-    with open(BOOT_SCRIPT) as f:
+def _write_script(src, dst):
+    """Returns True if dst changed."""
+    with open(src) as f:
         script = f.read()
     try:
-        with open(STARTBOOT) as f:
+        with open(dst) as f:
             if f.read() == script:
                 return False
     except FileNotFoundError:
         pass
-    if os.path.exists(STARTBOOT) and not _is_helix_script(STARTBOOT):
-        log("Keeping FLSun's screen start script as " + STARTBOOT_FLSUN)
-        shutil.copy2(STARTBOOT, STARTBOOT_FLSUN)
-    log("Setting the screen to start HelixScreen at boot")
-    tmp = STARTBOOT + ".tmp"
+    tmp = dst + ".tmp"
     with open(tmp, "w") as f:
         f.write(script)
     os.chmod(tmp, 0o755)
-    os.replace(tmp, STARTBOOT)
+    os.replace(tmp, dst)
     return True
+
+
+def _install_boot_script(log):
+    """Returns True if the boot scripts changed. FLSun firmware updates can
+    put the stock script back."""
+    if not os.path.isdir(QT_DIR):
+        log("WARNING: %s not found; HelixScreen won't start at boot" % QT_DIR)
+        return False
+    # The boot script runs the Wi-Fi script, so install that first.
+    changed = _write_script(WIFI_SCRIPT_SRC, WIFI_SCRIPT)
+    if os.path.exists(STARTBOOT) and not _is_helix_script(STARTBOOT):
+        log("Keeping FLSun's screen start script as " + STARTBOOT_FLSUN)
+        shutil.copy2(STARTBOOT, STARTBOOT_FLSUN)
+    if _write_script(BOOT_SCRIPT, STARTBOOT):
+        log("Setting the screen to start HelixScreen at boot")
+        changed = True
+    return changed
 
 
 # ------------------------------------------------------------ entry points
@@ -176,5 +188,9 @@ def before_remove(spec, log):
         shutil.copytree(cfg, CONFIG_BACKUP, symlinks=True)
         log("HelixScreen's settings are kept in " + CONFIG_BACKUP)
     shutil.rmtree(STATE_DIR, ignore_errors=True)
+    if os.path.exists(WIFI_SCRIPT):
+        log("Handing Wi-Fi back to FLSun's screen")
+        subprocess.call([WIFI_SCRIPT, "flsun"])
+        os.remove(WIFI_SCRIPT)
     if not _is_helix_script(STARTBOOT):
         _start_screen(log)

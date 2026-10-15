@@ -12,6 +12,8 @@ if [ -x "$HELIX_DIR/bin/helix-launcher.sh" ]; then
     # rc.local sources /etc/profile first, which carries the stock screen's
     # tslib LD_PRELOAD and Qt library paths. Keep them out of HelixScreen.
     unset LD_PRELOAD LD_LIBRARY_PATH QT_QPA_PLATFORM QT_QPA_GENERIC_PLUGINS QT_QPA_FB_TSLIB
+    # HelixScreen's Wi-Fi settings need NetworkManager to manage wlan0.
+    /home/pi/qt/out_linux/helixscreen_wifi.sh nm >/dev/null 2>&1 </dev/null &
     cd "$HELIX_DIR" || exit 1
     exec "$HELIX_DIR/bin/helix-launcher.sh" >/tmp/helixscreen-launcher.log 2>&1 </dev/null
 fi
