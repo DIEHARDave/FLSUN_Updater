@@ -26,7 +26,22 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): Klipper macros the T1 Pro is missing, starting with pause at layer (`SET_PAUSE_AT_LAYER`) |
 | `flsun_theme` | [FLSUN_theme](https://github.com/DIEHARDave/FLSUN_theme): FLSun's theme (logo and backgrounds) for Mainsail, and as the FLSUN theme in Fluidd; your previous theme folders are backed up and put back when you disable it |
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
+| `flsun_moonraker` | [FLSUN_moonraker](https://github.com/DIEHARDave/FLSUN_moonraker): current upstream Moonraker in place of FLSun's 2023 version, updated from the update manager afterwards. It installs Python 3.13 beside the system's 3.7 and puts back the compiler FLSun removed. The install takes about 10 minutes, and Moonraker is down for the last minute. |
+| `flsun_klipper` | [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper): current upstream Klipper in place of FLSun's 2022 fork, without flashing the mainboard. FLSun's Klipper stays installed beside it, and one command switches between them. Needs `flsun_moonraker` (see below). |
 | `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen (beta). Until HelixScreen's own releases include the T1 Pro, its T1 builds come from [DIEHARDave/helixscreen](https://github.com/DIEHARDave/helixscreen/releases), starting with v1.1.0-beta.8-T1. |
+
+### Plugins that depend on each other
+
+| Plugin | Needs | Order |
+| --- | --- | --- |
+| `flsun_klipper` | `flsun_moonraker` | **Install `flsun_moonraker` first**, or turn both on at the same time: plugins turned on together are installed in the order of the table above, so Moonraker comes first. Turned on alone, `flsun_klipper` stops with a message and changes nothing. Turning `flsun_moonraker` off later doesn't break `flsun_klipper`, because Python 3.13 and the compiler stay. |
+
+The other plugins don't depend on each other and can be turned on in any order:
+
+- `flsun_timelapse`, `flsun_remote_screen` and `flsun_notify` make the same system fixes, so whichever comes first does them. Timelapse and notify use the printer's camera, and the Screen webcam that `flsun_remote_screen` adds is listed after it.
+- `flsun_theme` gives Fluidd an FLSUN theme preset when `fluidd` is installed, before or after the theme, and puts it back after each Fluidd update.
+- `flsun_macros` works with FLSun's Klipper and with `flsun_klipper`, which uses an upstream version of its pause-at-layer macros automatically.
+- `flsun_remote_screen` follows whichever screen is running: FLSun's or `helixscreen`.
 
 To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
