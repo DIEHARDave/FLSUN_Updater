@@ -1,0 +1,14 @@
+[Unit]
+Description=FLSUN_Updater: apply flsun_recovery.cfg from a USB stick
+After=flsun-timesync.service moonraker.service
+
+[Service]
+# Started when FLSun's udev rules mount a USB stick (usb-mount-dropin.conf).
+# A separate unit from flsun_updater.service: starting that one while it is
+# already running does nothing, and the stick could then be missed. Runs
+# share a lock, so this one waits for any run in progress.
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/pi/FLSUN_Updater/flsun_updater.py run
+# Removing HelixScreen starts FLSun's Wi-Fi script in the background; let
+# it outlive the run.
+KillMode=none

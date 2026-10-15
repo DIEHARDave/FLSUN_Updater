@@ -19,6 +19,9 @@ msg "Removing the updater service"
 sudo systemctl disable --now "${SERVICE}.path" "${SERVICE}.service" > /dev/null 2>&1 || true
 sudo rm -f "/etc/systemd/system/${SERVICE}.path" "/etc/systemd/system/${SERVICE}.service"
 sudo rm -f /etc/systemd/system/flsun_updater_web.service
+sudo rm -f /etc/systemd/system/flsun_updater_usb.service \
+    /etc/systemd/system/usb-mount@.service.d/flsun_updater.conf \
+    /etc/systemd/system/u-mount@.service.d/flsun_updater.conf
 sudo rm -f /etc/sudoers.d/zz-flsun-updater
 sudo systemctl daemon-reload
 

@@ -10,7 +10,9 @@ stop Moonraker's update manager from working.
                                 Needs root. The flsun_updater service runs
                                 this at boot, whenever flsun_plugins.cfg is
                                 saved, and after Moonraker updates
-                                FLSUN_Updater.
+                                FLSUN_Updater; flsun_updater_usb runs it
+                                when a USB stick is mounted, to apply a
+                                flsun_recovery.cfg on it.
     flsun_updater.py web-apply  Install the releases Moonraker downloaded
                                 for type: web plugins. Needs root; run by
                                 the flsun_updater_web service.
@@ -33,6 +35,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -65,6 +68,27 @@ WEB_CLIENTS = [os.path.join(HOME, "mainsail"), os.path.join(HOME, "fluidd")]
 # sudo ignores files in sudoers.d whose names contain a dot, so the temporary
 # name is inert until the rename.
 SUDOERS = "/etc/sudoers.d/zz-flsun-updater"
+# Recovery without a network: a USB stick with this file turns plugins off.
+# FLSun's udev rules mount sticks under ~/printer_data/gcodes (/etc/um);
+# HelixScreen mounts them read-only under /mnt/usb.
+RECOVERY_FILE = "flsun_recovery.cfg"
+RECOVERY_DONE = "flsun_recovery.done.cfg"
+RECOVERY_LOG = "flsun_recovery.log"
+# Installed from system/: the file's name there, and where it goes.
+UNITS = [
+    ("flsun_updater.service", "/etc/systemd/system/flsun_updater.service"),
+    ("flsun_updater.path", "/etc/systemd/system/flsun_updater.path"),
+    ("flsun_updater_web.service",
+     "/etc/systemd/system/flsun_updater_web.service"),
+    ("flsun_updater_usb.service",
+     "/etc/systemd/system/flsun_updater_usb.service"),
+    # FLSun's mount units: usb-mount@ for a partition, u-mount@ for a stick
+    # without a partition table.
+    ("usb-mount-dropin.conf",
+     "/etc/systemd/system/usb-mount@.service.d/flsun_updater.conf"),
+    ("usb-mount-dropin.conf",
+     "/etc/systemd/system/u-mount@.service.d/flsun_updater.conf"),
+]
 LOCK = "/run/flsun_updater.lock"
 WEB_LOCK = "/run/flsun_updater_web.lock"
 MOONRAKER = "http://127.0.0.1:7125"
@@ -316,10 +340,8 @@ def ensure_units():
     """Installs FLSUN_Updater's systemd units from the repo, so that an
     update from the update manager also brings new or changed units."""
     changed = False
-    for unit in ("flsun_updater.service", "flsun_updater.path",
-                 "flsun_updater_web.service"):
+    for unit, dst in UNITS:
         src = os.path.join(REPO_DIR, "system", unit)
-        dst = os.path.join("/etc/systemd/system", unit)
         with open(src) as f:
             text = f.read()
         try:
@@ -328,9 +350,10 @@ def ensure_units():
                     continue
         except FileNotFoundError:
             pass
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
         os.chmod(dst, 0o644)
-        log("Installed " + unit)
+        log("Installed " + dst)
         changed = True
     if changed:
         subprocess.call(["systemctl", "daemon-reload"])
@@ -910,6 +933,7 @@ def sync_plugins():
     for name in sorted(set(selection or {}) - set(choices)):
         log("%s: '%s' is not in the plugin list; ignored"
             % (os.path.basename(SELECTION), name))
+    apply_recovery(plugins, choices)
     write_selection(plugins, choices, channels)
 
     todo = [p for p in plugins if choices[p["name"]] != installed[p["name"]]]
@@ -942,12 +966,152 @@ def sync_plugins():
             restart_service("klipper")
 
 
+# ------------------------------------------------------- USB stick recovery
+
+_recovery = []  # flsun_recovery.cfg files found by this run
+_recovery_devs = {}  # each file's USB device
+_recovery_applied = set()  # the ones sync_plugins read
+
+
+def usb_mounts():
+    """(device, mount point, read-only) for each mounted USB stick."""
+    try:
+        with open("/proc/mounts") as f:
+            lines = [line.split() for line in f]
+    except OSError:
+        return []
+    return [(dev, point.replace("\\040", " "), "ro" in opts.split(","))
+            for dev, point, _fs, opts, *_ in lines
+            if re.match(r"/dev/sd[a-z]", dev)]
+
+
+def find_recovery_files():
+    """flsun_recovery.cfg at the top of each mounted USB stick. The name is
+    matched without case, since FAT sticks written elsewhere may change it."""
+    found = []
+    for dev, point, _ro in usb_mounts():
+        try:
+            names = os.listdir(point)
+        except OSError:
+            continue
+        for n in names:
+            if n.lower() == RECOVERY_FILE:
+                found.append(os.path.join(point, n))
+                _recovery_devs[found[-1]] = dev
+    return found
+
+
+def apply_recovery(plugins, choices):
+    """Turns off the plugins that a USB stick's flsun_recovery.cfg sets to
+    no. It only turns plugins off: installing needs a network, which the
+    printer may not have."""
+    known = {p["name"] for p in plugins}
+    for path in _recovery:
+        log("Recovery file found: " + path)
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            with open(path, errors="replace") as f:
+                text = f.read()
+            # The [plugins] line is easy to leave out when writing it by hand.
+            if not re.search(r"^\s*\[", text, re.M):
+                text = "[plugins]\n" + text
+            parser.read_string(text, path)
+        except (OSError, configparser.Error) as e:
+            # Left in place, so the stick's log shows this again until
+            # the file is fixed.
+            log("  Can't read it, so nothing was changed: %s" % e)
+            continue
+        _recovery_applied.add(path)
+        if not parser.has_section("plugins"):
+            log("  It has no [plugins] section, so nothing was changed")
+            continue
+        for name in parser.options("plugins"):
+            try:
+                enabled = parser.getboolean("plugins", name)
+            except ValueError:
+                log("  '%s' is not yes or no; ignored" % name)
+                continue
+            if enabled:
+                log("  '%s: yes' ignored; a recovery file only turns "
+                    "plugins off" % name)
+                continue
+            names = sorted(known) if name == "all" else [name]
+            if name != "all" and name not in known:
+                log("  '%s' is not in the plugin list; ignored" % name)
+                continue
+            for n in names:
+                if choices[n]:
+                    log("  Turning off %s" % n)
+                    choices[n] = False
+
+
+def _mount(args):
+    res = subprocess.run(["mount"] + args, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, universal_newlines=True)
+    if res.returncode != 0:
+        raise OSError(res.stdout.strip() or "mount failed")
+
+
+@contextlib.contextmanager
+def writable_stick(dev):
+    """Yields a read-write mount point for the stick. FLSun's /etc/um mounts
+    sticks read-write, but HelixScreen mounts them read-only and can get
+    there first, and removing HelixScreen can unmount the stick."""
+    mount = next(((p, ro) for d, p, ro in usb_mounts() if d == dev), None)
+    if mount and not mount[1]:
+        yield mount[0]
+    elif mount:
+        _mount(["-o", "remount,rw", mount[0]])
+        try:
+            yield mount[0]
+        finally:
+            os.sync()
+            with contextlib.suppress(OSError):
+                _mount(["-o", "remount,ro", mount[0]])
+    else:
+        point = tempfile.mkdtemp(prefix="flsun_recovery.", dir="/run")
+        try:
+            _mount([dev, point])
+            try:
+                yield point
+            finally:
+                os.sync()
+                subprocess.call(["umount", point])
+        finally:
+            with contextlib.suppress(OSError):
+                os.rmdir(point)
+
+
+def finish_recovery():
+    """Renames each recovery file that was applied, so that it isn't applied
+    again at every boot while the stick stays in, and writes this run's log
+    beside it. A file the run never got to stays for the next run."""
+    for path in _recovery:
+        name = os.path.basename(path)
+        try:
+            with writable_stick(_recovery_devs[path]) as point:
+                if path in _recovery_applied:
+                    os.replace(os.path.join(point, name),
+                               os.path.join(point, RECOVERY_DONE))
+                with open(os.path.join(point, RECOVERY_LOG), "w") as f:
+                    f.write("\n".join(_collect or []) + "\n")
+        except OSError as e:
+            log("Couldn't update the USB stick %s: %s; remove the stick, or "
+                "the file is applied again at the next boot"
+                % (_recovery_devs[path], e))
+    os.sync()
+
+
 # ----------------------------------------------------------------- commands
 
 def cmd_run(_args):
+    global _collect, _recovery
     require_root("run")
     _lock = take_lock(LOCK)
     open_log()
+    _recovery = find_recovery_files()
+    if _recovery:
+        _collect = []  # written to the USB stick at the end
     log("FLSUN_Updater run started")
     # Left behind if a run was killed part way.
     with contextlib.suppress(FileNotFoundError):
@@ -959,6 +1123,8 @@ def cmd_run(_args):
         except Exception:
             log("%s failed:\n%s" % (step.__name__, traceback.format_exc()))
     log("FLSUN_Updater run finished")
+    if _recovery:
+        finish_recovery()
 
 
 def cmd_web_apply(_args):

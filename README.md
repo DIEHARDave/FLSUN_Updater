@@ -72,12 +72,31 @@ Installed plugins, FLSUN_Updater itself and Mainsail show up in the update manag
 
 From SSH, `~/FLSUN_Updater/flsun_updater.py list` shows the plugins, and `sudo ~/FLSUN_Updater/flsun_updater.py run` applies `flsun_plugins.cfg` and runs the repairs.
 
+## Recovery from a USB stick
+
+If a plugin leaves the printer unreachable, for example with no Wi-Fi, a USB stick can turn it off without a network:
+
+1. Download [recovery/flsun_recovery.cfg](recovery/flsun_recovery.cfg) and copy it to the top folder of a FAT32 USB stick, keeping its name.
+2. Set the plugins to turn off to `no`. It turns off HelixScreen as it comes, which brings FLSun's stock screen back, along with its Wi-Fi setup. `all: no` turns off every plugin.
+
+   ```ini
+   [plugins]
+   helixscreen: no
+   ```
+
+3. Plug the stick into the printer and turn it on, or plug it in while the printer is on.
+
+The plugins are removed as if you had set them to `no` in `flsun_plugins.cfg`, after any running print. The file is then renamed `flsun_recovery.done.cfg`, so it isn't applied again while the stick stays in, and `flsun_recovery.log` on the stick shows what happened. A recovery file only turns plugins off; turn them back on as usual once the printer is reachable.
+
+This works on printers whose FLSUN_Updater already has it, so update FLSUN_Updater before you need it.
+
 ## How it works
 
 - `flsun_updater.service` runs `flsun_updater.py run` as root at boot, after the clock is set. It also runs when `flsun_plugins.cfg` changes (`flsun_updater.path`) and when Moonraker updates FLSUN_Updater.
 - **`git_repo` plugins** are cloned into `path` as `pi`. If the repo has an `install.sh`, it runs; `uninstall.sh` runs on removal. FLSun's image asks `pi` for a password for `sudo`, so the updater allows passwordless `sudo` for `pi` only while those scripts run, and removes the rule afterwards.
 - **`type: web` plugins** are unpacked from the release zip named by `asset_name`. Updates from the update manager are downloaded by FLSUN_Updater's Moonraker component (`moonraker/flsun_plugins.py`) and installed as root by `flsun_updater_web.service`. A plugin can have a hook in `hooks/` for anything else; HelixScreen's switches the screen's boot script and restarts the screen.
 - Installed plugins' entries are copied into `flsun_updater_plugins.conf`, which `moonraker.conf` includes. An entry that the plugin's own installer already added isn't copied, because Moonraker won't start with a duplicate.
+- FLSun's udev rules mount USB sticks under `~/printer_data/gcodes` (`/etc/um`). A drop-in for those mount units starts `flsun_updater_usb.service` once a stick is mounted, at boot or later. It runs the same `flsun_updater.py run`, which first looks for `flsun_recovery.cfg` on each mounted stick.
 - The macros (`klipper/flsun_updater_macros.cfg`, included from `printer.cfg`) call Moonraker remote methods in the same component. Replies appear in the console, without needing Klipper's `[respond]`.
 
 Plugin installers run with full `sudo` rights, so every plugin is reviewed before it's listed. Updates to a listed plugin reach printers without another review, so only list repos whose maintainers you trust.
