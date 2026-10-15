@@ -74,6 +74,20 @@ SUDOERS = "/etc/sudoers.d/zz-flsun-updater"
 RECOVERY_FILE = "flsun_recovery.cfg"
 RECOVERY_DONE = "flsun_recovery.done.cfg"
 RECOVERY_LOG = "flsun_recovery.log"
+# A [restore] section in the recovery file puts back a Klipper backup from
+# this folder on the stick: <name>.tar.gz and <name>.tar.gz.sha256, made by
+# tar from / . Only these paths may be restored.
+RESTORE_DIR = "flsun_restore"
+RESTORE_PATHS = [
+    "home/pi/klipper", "home/pi/klippy-env", "home/pi/printer_data/config",
+    "home/pi/printer_data/systemd", "home/pi/klipper_config",
+    "home/pi/flsun_func", "home/pi/savedVariables1.cfg",
+    "home/pi/fan_max_power_value_file", "home/pi/flsun_flag",
+    "home/pi/qt/out_linux/tuiconfig.ini", "home/pi/qt/out_linux/syssetting.ini",
+    "etc/systemd/system/klipper.service",
+]
+FLSUN_KLIPPER_DROPIN = \
+    "/etc/systemd/system/klipper.service.d/flsun_klipper_upstream.conf"
 # Installed from system/: the file's name there, and where it goes.
 UNITS = [
     ("flsun_updater.service", "/etc/systemd/system/flsun_updater.service"),
@@ -256,6 +270,48 @@ def fix_hosts():
         if text and not text.endswith("\n"):
             f.write("\n")
         f.write("127.0.1.1\t%s\n" % hostname)
+
+
+def fix_failed_units():
+    """Three of FLSun's boot services fail on every boot and show up in
+    `systemctl --failed`. Each is only touched while its fault is there, so
+    a FLSun firmware update that fixes one gets it back."""
+    def unit_enabled(name):
+        return subprocess.call(["systemctl", "-q", "is-enabled", name],
+                               stderr=subprocess.DEVNULL) == 0
+
+    # adbd.service starts /etc/init.d/adbd.sh, which FLSun deleted.
+    if unit_enabled("adbd.service") and not os.path.exists("/etc/init.d/adbd.sh"):
+        log("Disabling adbd.service: its script /etc/init.d/adbd.sh is missing")
+        subprocess.call(["systemctl", "disable", "--now", "-q", "adbd.service"])
+        subprocess.call(["systemctl", "reset-failed", "adbd.service"])
+
+    # FLSun's /etc/monitor has a syntax error, so it exits at once and
+    # systemd restarts it every second until it gives up.
+    if (unit_enabled("monitor.service") and os.path.exists("/etc/monitor")
+            and subprocess.call(["bash", "-n", "/etc/monitor"],
+                                stderr=subprocess.DEVNULL) != 0):
+        log("Disabling monitor.service: FLSun's /etc/monitor has a syntax error")
+        subprocess.call(["systemctl", "disable", "--now", "-q", "monitor.service"])
+        subprocess.call(["systemctl", "reset-failed", "monitor.service"])
+
+    # /etc/modules lists Raspberry Pi drivers, which this board doesn't have,
+    # so systemd-modules-load fails.
+    try:
+        with open("/etc/modules") as f:
+            lines = f.read().splitlines(True)
+    except OSError:
+        return
+    # Any bcm2835 driver; FLSun's file has "bcm2835-v412", a typo for v4l2.
+    pi_driver = re.compile(r"^\s*(snd[-_])?bcm2835\S*\s*$")
+    if any(pi_driver.match(l) for l in lines):
+        log("Commenting out Raspberry Pi drivers in /etc/modules")
+        if not os.path.exists("/etc/modules.flsun"):
+            shutil.copy2("/etc/modules", "/etc/modules.flsun")
+        with open("/etc/modules", "w") as f:
+            f.writelines("# " + l if pi_driver.match(l) else l for l in lines)
+        subprocess.call(["systemctl", "reset-failed", "systemd-modules-load.service"])
+        subprocess.call(["systemctl", "restart", "systemd-modules-load.service"])
 
 
 def fix_certificates():
@@ -1023,7 +1079,8 @@ def apply_recovery(plugins, choices):
             continue
         _recovery_applied.add(path)
         if not parser.has_section("plugins"):
-            log("  It has no [plugins] section, so nothing was changed")
+            if not parser.has_section("restore"):
+                log("  It has no [plugins] section, so nothing was changed")
             continue
         for name in parser.options("plugins"):
             try:
@@ -1043,6 +1100,112 @@ def apply_recovery(plugins, choices):
                 if choices[n]:
                     log("  Turning off %s" % n)
                     choices[n] = False
+
+
+def member_path(member):
+    name = member.name
+    return name[2:] if name.startswith("./") else name
+
+
+def restore_top(name):
+    """The RESTORE_PATHS entry that name is in, or None."""
+    return next((p for p in RESTORE_PATHS
+                 if name == p or name.startswith(p + "/")), None)
+
+
+def restore_member_ok(name, links):
+    """A backup may only hold files under RESTORE_PATHS, and nothing inside
+    a symlink it also holds, which could point anywhere."""
+    if name.startswith("/") or ".." in name.split("/"):
+        return False
+    if restore_top(name) is None:
+        return False
+    return not any(name.startswith(link + "/") for link in links)
+
+
+def restore_backup(point, name):
+    """Puts back the Klipper backup <name>.tar.gz from the stick's
+    flsun_restore folder. The files it replaces are moved aside, not
+    deleted. Returns True if it was restored."""
+    import hashlib
+    import tarfile
+    if not NAME_RE.match(name):
+        log("  restore '%s': not a backup name; ignored" % name)
+        return False
+    archive = os.path.join(point, RESTORE_DIR, name + ".tar.gz")
+    try:
+        with open(archive + ".sha256") as f:
+            want = f.read().split()[0].lower()
+        digest = hashlib.sha256()
+        with open(archive, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                digest.update(block)
+    except (OSError, IndexError) as e:
+        log("  Can't read the backup %s: %s" % (archive, e))
+        return False
+    if digest.hexdigest() != want:
+        log("  The backup %s doesn't match its .sha256; not restored"
+            % archive)
+        return False
+    try:
+        with tarfile.open(archive) as tar:
+            names = [(member_path(m), m.issym() or m.islnk())
+                     for m in tar.getmembers()]
+    except (OSError, tarfile.TarError) as e:
+        log("  Can't read the backup %s: %s" % (archive, e))
+        return False
+    links = {n for n, is_link in names if is_link}
+    bad = [n for n, _ in names if not restore_member_ok(n, links)]
+    if bad:
+        log("  The backup holds files it may not restore (%s); not restored"
+            % ", ".join(bad[:5]))
+        return False
+    tops = sorted({restore_top(n) for n, _ in names})
+    wait_until_idle()
+    log("  Restoring %s: %s" % (name, ", ".join(tops)))
+    subprocess.call(["systemctl", "stop", "klipper"])
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for p in tops:
+        path = "/" + p
+        if os.path.lexists(path):
+            os.replace(path, "%s.pre_restore-%s" % (path, stamp))
+            log("  Moved %s aside to %s.pre_restore-%s" % (path, path, stamp))
+    # No --acls: the T1's root filesystem doesn't support them, and tar then
+    # warns about every file.
+    if not run_logged(["tar", "--numeric-owner", "--xattrs",
+                       "-xzpf", archive, "-C", "/"]):
+        log("  Unpacking failed; the moved files are still beside it")
+        return False
+    # FLSUN_klipper points the klipper service at upstream Klipper with a
+    # drop-in. A backup of FLSun's Klipper means running FLSun's again.
+    if ("home/pi/klipper" in tops
+            and os.path.exists(FLSUN_KLIPPER_DROPIN)):
+        os.replace(FLSUN_KLIPPER_DROPIN,
+                   "%s.pre_restore-%s" % (FLSUN_KLIPPER_DROPIN, stamp))
+        log("  Switched the klipper service back to FLSun's Klipper "
+            "(FLSUN_klipper's drop-in kept as %s.pre_restore-%s)"
+            % (FLSUN_KLIPPER_DROPIN, stamp))
+    subprocess.call(["systemctl", "daemon-reload"])
+    restart_service("klipper")
+    log("  Restored %s" % name)
+    return True
+
+
+def apply_restore():
+    """Restores the Klipper backups that a recovery file's [restore]
+    section names (klipper: <backup name>)."""
+    for path in _recovery:
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(path)
+        except configparser.Error:
+            continue  # apply_recovery already logged it
+        if not parser.has_option("restore", "klipper"):
+            continue
+        _recovery_applied.add(path)
+        name = parser.get("restore", "klipper").strip()
+        log("Restore requested in %s: klipper: %s" % (path, name))
+        restore_backup(os.path.dirname(path), name)
 
 
 def _mount(args):
@@ -1116,8 +1279,14 @@ def cmd_run(_args):
     # Left behind if a run was killed part way.
     with contextlib.suppress(FileNotFoundError):
         os.remove(SUDOERS)
-    for step in (fix_hosts, fix_certificates, check_git, ensure_units,
-                 fix_web_clients, sync_plugins, fix_refresh_times):
+    if _recovery:
+        try:
+            apply_restore()
+        except Exception:
+            log("apply_restore failed:\n%s" % traceback.format_exc())
+    for step in (fix_hosts, fix_failed_units, fix_certificates, check_git,
+                 ensure_units, fix_web_clients, sync_plugins,
+                 fix_refresh_times):
         try:
             step()
         except Exception:

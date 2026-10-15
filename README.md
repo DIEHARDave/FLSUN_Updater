@@ -13,6 +13,7 @@ FLSun's system image can't reach GitHub as shipped, and its update manager can't
 - **Stuck update checks.** If the update manager last checked while the clock was wrong, its certificate checks failed and its next automatic check can be years away. Those checks are run again.
 - **Release updates (`type: web`).** FLSun's older Moonraker downloads the wrong file from a release, loses files listed in `persistent_files` that sit in subfolders, drops the executable bits, and can't update folders owned by root. FLSUN_Updater's Moonraker component handles these entries instead.
 - **`sudo: unable to resolve host`.** The printer's hostname is added to `/etc/hosts`.
+- **Failed services.** Three of FLSun's services fail at every boot and show in `systemctl --failed`: `adbd` (FLSun deleted its script), `monitor` (FLSun's `/etc/monitor` has a syntax error, so it never runs) and `systemd-modules-load` (`/etc/modules` lists Raspberry Pi drivers this board doesn't have). The first two are disabled and the driver lines are commented out, with the original kept as `/etc/modules.flsun`. Each is only changed while it's broken, so if a FLSun firmware update fixes one, it's left alone.
 
 ## Plugins
 
@@ -104,6 +105,27 @@ If a plugin leaves the printer unreachable, for example with no Wi-Fi, a USB sti
 3. Plug the stick into the printer and turn it on, or plug it in while the printer is on.
 
 The plugins are removed as if you had set them to `no` in `flsun_plugins.cfg`, after any running print. The file is then renamed `flsun_recovery.done.cfg`, so it isn't applied again while the stick stays in, and `flsun_recovery.log` on the stick shows what happened. A recovery file only turns plugins off; turn them back on as usual once the printer is reachable.
+
+### Restoring a Klipper backup
+
+The same file can put back a backup of Klipper, for example FLSun's stock Klipper after an upgrade that went wrong. Copy the backup into a folder named `flsun_restore` on the stick, and add a `[restore]` section naming it:
+
+```ini
+[restore]
+klipper: klipper_stock
+```
+
+```
+flsun_recovery.cfg
+flsun_restore/klipper_stock.tar.gz
+flsun_restore/klipper_stock.tar.gz.sha256
+```
+
+The backup is a `tar` archive made from `/`, with its SHA-256 beside it. After any running print, the printer checks the backup against its `.sha256`, then stops Klipper. It renames the files that the backup replaces to `<name>.pre_restore-<date>` (it doesn't delete them), unpacks the backup and restarts Klipper. Only Klipper's own files can be restored: Klipper and its Python environment, the printer config, `klipper.service` and the few files FLSun's Klipper keeps in `/home/pi`. The printer refuses a backup that holds anything else.
+
+If [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper) runs upstream Klipper and the backup includes FLSun's Klipper (`/home/pi/klipper`), the klipper service is switched back to FLSun's Klipper too; FLSUN_klipper's switch is kept beside it as `*.pre_restore-<date>`.
+
+This restores the printer's computer only. If the printer's mainboard firmware was also changed, it has to be put back too, or Klipper can't connect to the mainboard.
 
 This works on printers whose FLSUN_Updater already has it, so update FLSUN_Updater before you need it.
 
