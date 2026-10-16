@@ -48,7 +48,7 @@ The other plugins don't depend on each other and can be turned on in any order:
 
 An OrcaSlicer printer profile for the T1 Pro set up for these plugins: **https://cloud.orcaslicer.com/b/4a1e3c1b305c**
 
-Its start G-code calls `PRINT_START` from `flsun_macros`, so turn that plugin on before printing with it. It also reports layers (`SET_PRINT_STATS_INFO`), which pause at layer and FLSUN_klipper's power loss recovery use, and takes timelapse frames for `flsun_timelapse`.
+Its start and end G-code call `PRINT_START` and `PRINT_END` from `flsun_macros`, so turn that plugin on before printing with it. It also reports layers (`SET_PRINT_STATS_INFO`), which pause at layer and FLSUN_klipper's power loss recovery use, and takes timelapse frames for `flsun_timelapse`.
 
 To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
