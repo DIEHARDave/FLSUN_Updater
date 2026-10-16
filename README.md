@@ -24,7 +24,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | `flsun_timelapse` | [FLSUN_Timelapse](https://github.com/DIEHARDave/FLSUN_Timelapse): timelapse videos in Mainsail with no need for FLSun phone app to retrive videos. |
 | `flsun_remote_screen` | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen): view and control the touchscreen from a browser at `http://<printer-ip>/screen/` |
 | `flsun_notify` | [FLSUN_notify](https://github.com/DIEHARDave/FLSUN_notify): print notifications with a camera photo to Telegram, Discord, Matrix and [many more services](https://github.com/caronc/apprise/wiki) |
-| `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): Klipper macros the T1 Pro is missing, starting with pause at layer (`SET_PAUSE_AT_LAYER`) |
+| `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): `PRINT_START` and `PRINT_END` (heat soak and Z offset per material, a bed mesh per bed temperature, a prime line), pause at layer (`SET_PAUSE_AT_LAYER`), and macros for filament, PID tuning and the chamber light. The Orca profile below needs it. |
 | `flsun_theme` | [FLSUN_theme](https://github.com/DIEHARDave/FLSUN_theme): FLSun's theme (logo and backgrounds) for Mainsail, and as the FLSUN theme in Fluidd; your previous theme folders are backed up and put back when you disable it |
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
 | `flsun_moonraker` | [FLSUN_moonraker](https://github.com/DIEHARDave/FLSUN_moonraker): current upstream Moonraker in place of FLSun's 2023 version, updated from the update manager afterwards. It installs Python 3.13 beside the system's 3.7 and puts back the compiler FLSun removed. The install takes about 10 minutes, and Moonraker is down for the last minute. |
@@ -43,6 +43,12 @@ The other plugins don't depend on each other and can be turned on in any order:
 - `flsun_theme` gives Fluidd an FLSUN theme preset when `fluidd` is installed, before or after the theme, and puts it back after each Fluidd update.
 - `flsun_macros` works with FLSun's Klipper and with `flsun_klipper`, which uses an upstream version of its pause-at-layer macros automatically.
 - `flsun_remote_screen` follows whichever screen is running: FLSun's or `helixscreen`.
+
+### OrcaSlicer profile
+
+An OrcaSlicer printer profile for the T1 Pro set up for these plugins: **https://cloud.orcaslicer.com/b/4a1e3c1b305c**
+
+Its start G-code calls `PRINT_START` from `flsun_macros`, so turn that plugin on before printing with it. It also reports layers (`SET_PRINT_STATS_INFO`), which pause at layer and FLSUN_klipper's power loss recovery use, and takes timelapse frames for `flsun_timelapse`.
 
 To ask for another plugin, [open a plugin request](https://github.com/DIEHARDave/FLSUN_Updater/issues/new?template=plugin_request.yml). Plugin authors: see [docs/adding-plugins.md](docs/adding-plugins.md).
 
