@@ -346,6 +346,75 @@ def fix_web_clients():
             os.lchown(p, uid, gid)
 
 
+def fix_nginx_logs():
+    """FLSun's Mainsail site has "error_log off;" in its webcam locations.
+    nginx has no "off" for error_log, so it logs to a file named "off" in
+    its prefix, /usr/share/nginx/off. While the camera is unplugged or
+    restarting, every snapshot request adds a line, about 30 MB a day, and
+    nothing rotates or removes that file."""
+    sites = "/etc/nginx/sites-available"
+    pattern = re.compile(r"^(\s*)error_log\s+off\s*;", re.M)
+    changed = {}
+    try:
+        names = sorted(os.listdir(sites))
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(sites, name)
+        if ".bak" in name or not os.path.isfile(path):
+            continue
+        with open(path) as f:
+            text = f.read()
+        fixed = pattern.sub(r"\1error_log /dev/null crit;", text)
+        if fixed != text:
+            changed[path] = text
+            with open(path, "w") as f:
+                f.write(fixed)
+    if changed:
+        test = subprocess.run(["nginx", "-t"], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, universal_newlines=True)
+        if test.returncode != 0:
+            for path, text in changed.items():
+                with open(path, "w") as f:
+                    f.write(text)
+            log("nginx rejected the error_log fix, so it was undone:\n"
+                + test.stdout.strip())
+            return
+        log("Stopped nginx logging webcam errors to /usr/share/nginx/off "
+            "(\"error_log off;\" in %s)"
+            % ", ".join(os.path.basename(p) for p in changed))
+        subprocess.call(["systemctl", "reload", "nginx"])
+    for name in names:
+        path = os.path.join(sites, name)
+        if ".bak" in name or not os.path.isfile(path):
+            continue
+        with open(path) as f:
+            if pattern.search(f.read()):
+                return  # still in use; nginx would only reopen it
+    off = "/usr/share/nginx/off"
+    if os.path.isfile(off):
+        size = os.path.getsize(off)
+        os.remove(off)
+        log("Removed %s (%.0f MB of webcam errors)" % (off, size / 1048576))
+
+
+def fix_old_logs():
+    """FLSun's Klipper rotates klippy.log at 50 MB into klippy.log.1 to .3.
+    Upstream Klipper names its old logs by date instead, so after the switch
+    those three stay behind, 150 MB that never changes. FLSun's
+    /etc/check_log empties the whole logs folder at boot once it passes
+    200 MB, which they bring close. Numbered logs untouched for a week are
+    removed; FLSun's Klipper rewrites them far more often while in use."""
+    week_ago = time.time() - 7 * 86400
+    removed = 0
+    for path in glob.glob(os.path.join(DATA_DIR, "logs", "klippy.log.[0-9]")):
+        if os.path.getmtime(path) < week_ago:
+            removed += os.path.getsize(path)
+            os.remove(path)
+    if removed:
+        log("Removed old klippy.log.1 to .3 (%.0f MB)" % (removed / 1048576))
+
+
 def fix_refresh_times():
     """Repairs updaters that last checked for updates while the clock was
     wrong. A check made with the clock in the future leaves a refresh time
@@ -1285,8 +1354,8 @@ def cmd_run(_args):
         except Exception:
             log("apply_restore failed:\n%s" % traceback.format_exc())
     for step in (fix_hosts, fix_failed_units, fix_certificates, check_git,
-                 ensure_units, fix_web_clients, sync_plugins,
-                 fix_refresh_times):
+                 ensure_units, fix_web_clients, fix_nginx_logs, fix_old_logs,
+                 sync_plugins, fix_refresh_times):
         try:
             step()
         except Exception:
