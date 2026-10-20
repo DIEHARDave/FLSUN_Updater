@@ -5,8 +5,16 @@ through /home/pi/qt/out_linux/startboot.sh. The hook swaps that script,
 keeps the user's config/ across updates the way HelixScreen's own installer
 does, and restarts the screen. It also hands wlan0 to NetworkManager, which
 HelixScreen's Wi-Fi settings use, and back to FLSun's /etc/sw on removal.
+
+HelixScreen's releases have no T1 package, so the T1 runs the Centauri
+Carbon (cc1) one: a static armv7 build for the same 480x272 panel. That
+package's config/settings.json is the CC1's preset, so a fresh install gets
+the flsun_t1 preset instead, with the T1's display and touch settings, which
+upstream leaves out of the preset. HelixScreen's own updater is turned off:
+it runs the bundled install.sh, which doesn't know the T1.
 """
 
+import json
 import os
 import re
 import shutil
@@ -34,6 +42,19 @@ NEVER_KEEP = {
     "print_start_profiles", "sounds", "platform",
 }
 
+# The tlsc6x digitizer is mounted portrait (272x480) but declares the
+# display's 480x272 range, and lv_evdev clamps to the declared range before
+# any calibration matrix runs. A swapped, inverted stored range maps it.
+T1_DISPLAY = {"rotate": 0, "rotation_probed": True}
+T1_INPUT = {
+    "touch_device": "/dev/input/event1",
+    "calibration": {"a": 1.0, "b": 0.0, "c": 0.0, "d": 0.0, "e": 1.0,
+                    "f": 0.0, "valid": False},
+    "touch_range": {"valid": True, "swap_axes": True, "min_x": -19,
+                    "max_x": 486, "min_y": 267, "max_y": -3, "rotation": 0},
+}
+ENV_UPDATES = "HELIX_DISABLE_AUTO_UPDATES"
+
 
 def _copy(src, dst):
     if os.path.isdir(src) and not os.path.islink(src):
@@ -42,13 +63,7 @@ def _copy(src, dst):
         shutil.copy2(src, dst, follow_symlinks=False)
 
 
-def post_extract(spec, old_root, new_root, log):
-    """Called with the new release unpacked beside the old install, after
-    persistent_files were copied over."""
-    old_cfg = os.path.join(old_root, "config")
-    new_cfg = os.path.join(new_root, "config")
-    if not os.path.isdir(old_cfg) or not os.path.isdir(new_cfg):
-        return
+def _keep_config(old_cfg, new_cfg):
     for name in os.listdir(old_cfg):
         if name in NEVER_KEEP or re.match(r"crash_.*\.txt$", name):
             continue
@@ -61,6 +76,65 @@ def post_extract(spec, old_root, new_root, log):
                     continue
                 if not os.path.lexists(os.path.join(dst, sub)):
                     _copy(os.path.join(src, sub), os.path.join(dst, sub))
+
+
+def _t1_settings(new_root, log):
+    """Replaces the CC1 package's settings.json with the T1's. Settings kept
+    from an earlier install are left alone."""
+    path = os.path.join(new_root, "config", "settings.json")
+    try:
+        with open(path) as f:
+            settings = json.load(f)
+    except (OSError, ValueError):
+        settings = None
+    if settings is not None and settings.get("preset") != "cc1":
+        return
+    preset = os.path.join(new_root, "assets", "config", "presets",
+                          "flsun_t1.json")
+    try:
+        with open(preset) as f:
+            settings = json.load(f)
+    except (OSError, ValueError) as e:
+        log("WARNING: can't read %s (%s); detection will pick the preset"
+            % (preset, e))
+        settings = {"wizard_completed": False}
+    settings.setdefault("display", {}).update(T1_DISPLAY)
+    settings.setdefault("input", {}).update(T1_INPUT)
+    log("Setting up HelixScreen for the T1 Pro's screen")
+    with open(path + ".tmp", "w") as f:
+        json.dump(settings, f, indent=2)
+    os.replace(path + ".tmp", path)
+
+
+def _disable_self_update(new_root, log):
+    path = os.path.join(new_root, "config", "helixscreen.env")
+    try:
+        with open(path) as f:
+            env = f.read()
+    except FileNotFoundError:
+        env = ""
+    if re.search(r"^\s*%s=" % ENV_UPDATES, env, re.M):
+        return
+    log("Turning off HelixScreen's own updater; updates come from here")
+    if env and not env.endswith("\n"):
+        env += "\n"
+    env += ("\n# Set by FLSUN_Updater: HelixScreen's own updater can't install"
+            " on the T1 Pro.\n%s=1\n" % ENV_UPDATES)
+    with open(path, "w") as f:
+        f.write(env)
+
+
+def post_extract(spec, old_root, new_root, log):
+    """Called with the new release unpacked beside the old install (if
+    any), after persistent_files were copied over."""
+    old_cfg = os.path.join(old_root, "config")
+    new_cfg = os.path.join(new_root, "config")
+    if not os.path.isdir(new_cfg):
+        return
+    if os.path.isdir(old_cfg):
+        _keep_config(old_cfg, new_cfg)
+    _t1_settings(new_root, log)
+    _disable_self_update(new_root, log)
 
 
 # ------------------------------------------------------------------ screen

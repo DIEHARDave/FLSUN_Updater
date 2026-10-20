@@ -838,7 +838,7 @@ def apply_release(p, zip_path):
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     remove_item(dst)
                     copy_item(src, dst)
-            call_hook(p, "post_extract", root, new)
+        call_hook(p, "post_extract", root, new)
         if p["owner"] == "root":
             run(["chown", "-R", "root:root", new])
             run(["chmod", "-R", "go-w", new])

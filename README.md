@@ -31,7 +31,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
 | `flsun_moonraker` | [FLSUN_moonraker](https://github.com/DIEHARDave/FLSUN_moonraker): current upstream Moonraker in place of FLSun's 2023 version, updated from the update manager afterwards. It installs Python 3.13 beside the system's 3.7 and puts back the compiler FLSun removed. The install takes about 10 minutes, and Moonraker is down for the last minute. |
 | `flsun_klipper` | [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper): current upstream Klipper in place of FLSun's 2022 fork, without flashing the mainboard. FLSun's Klipper stays installed beside it, and one command switches between them. Needs `flsun_moonraker` (see below). |
-| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen (beta). Until HelixScreen's own releases include the T1 Pro, its T1 builds come from [DIEHARDave/helixscreen](https://github.com/DIEHARDave/helixscreen/releases), starting with v1.1.0-beta.8-T1. |
+| `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen (beta), from HelixScreen's own releases. They have no T1 Pro package, so it installs the Centauri Carbon one (`helixscreen-cc1.zip`, built for the same CPU and screen) and sets it up for the T1. HelixScreen's in-app updater is turned off; updates come from the update manager. |
 
 ### Plugins that depend on each other
 
@@ -45,6 +45,26 @@ The other plugins don't depend on each other and can be turned on in any order:
 - `flsun_theme` gives Fluidd an FLSUN theme preset when `fluidd` is installed, before or after the theme, and puts it back after each Fluidd update.
 - `flsun_macros` works with FLSun's Klipper and with `flsun_klipper`, which uses an upstream version of its pause-at-layer macros automatically.
 - `flsun_remote_screen` follows whichever screen is running: FLSun's or `helixscreen`.
+
+### HelixScreen on the T1 Pro uses the Centauri Carbon build
+
+HelixScreen doesn't publish a build for the T1 Pro, and its developer has said there won't be a build for each board. The `helixscreen` plugin installs the official build for the **Elegoo Centauri Carbon (CC1)** instead, `helixscreen-cc1.zip`. That build was made for the CC1, but it runs on the T1 Pro unchanged:
+
+- Both boards have an armv7 Cortex-A7 CPU and a 480x272 screen driven through the framebuffer.
+- The CC1 build is fully static, so it doesn't depend on the T1 Pro's old system libraries (Debian 10, glibc 2.28). HelixScreen's Raspberry Pi builds need a newer glibc and don't run here.
+
+HelixScreen recognizes the T1 Pro and uses its `flsun_t1` preset for heaters, fans, the filament sensor, the Bed Level button (`BED_LEVEL_1`) and the enclosure light. Some things the CC1 build gets wrong for the T1 Pro, so FLSUN_Updater's hook (`hooks/helixscreen.py`) fixes them:
+
+- **Settings.** The CC1 package ships the CC1's settings. A new install gets the `flsun_t1` preset and the T1 Pro's display and touch settings instead. The touch controller is mounted sideways and reports the wrong range, so its axes are swapped and mapped explicitly (`input.touch_range` in `config/settings.json`). Your settings are kept on every update.
+- **Updates.** HelixScreen's in-app updater runs an installer that doesn't know the T1 Pro, so it is turned off (`HELIX_DISABLE_AUTO_UPDATES=1` in `config/helixscreen.env`). New releases arrive through the update manager.
+
+What to expect from a build made for another printer:
+
+- HelixScreen's diagnostics and About screen give the platform as `cc1`.
+- The CC1 build is tuned for a board with 112 MB of RAM. It is optimized for size, and it draws in 16-bit color.
+- Report bugs to HelixScreen if they also happen on a CC1. Report anything specific to the T1 Pro here.
+
+Before v1.1.0-beta.10, the T1 Pro ran builds from [DIEHARDave/helixscreen](https://github.com/DIEHARDave/helixscreen/releases) (v1.1.0-beta.8-T1). Updating to a CC1 release keeps your settings.
 
 ### OrcaSlicer profile
 
