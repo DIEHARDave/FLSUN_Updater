@@ -151,7 +151,7 @@ flsun_restore/klipper_stock.tar.gz.sha256
 
 The backup is a `tar` archive made from `/`, with its SHA-256 beside it. After any running print, the printer checks the backup against its `.sha256`, then stops Klipper. It renames the files that the backup replaces to `<name>.pre_restore-<date>` (it doesn't delete them), unpacks the backup and restarts Klipper. Only Klipper's own files can be restored: Klipper and its Python environment, the printer config, `klipper.service` and the few files FLSun's Klipper keeps in `/home/pi`. The printer refuses a backup that holds anything else.
 
-If [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper) runs upstream Klipper and the backup includes FLSun's Klipper (`/home/pi/klipper`), the klipper service is switched back to FLSun's Klipper too; FLSUN_klipper's switch is kept beside it as `*.pre_restore-<date>`.
+If [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper) runs upstream Klipper and the backup includes FLSun's Klipper (`/home/pi/klipper`), the klipper service is switched back to FLSun's Klipper too; FLSUN_klipper's switch is kept beside it as `*.pre_restore-<date>`. If the mainboard has been flashed with newer firmware, which FLSun's Klipper can't talk to, the service stays on upstream Klipper and the log says so.
 
 This restores the printer's computer only. If the printer's mainboard firmware was also changed, it has to be put back too, or Klipper can't connect to the mainboard.
 

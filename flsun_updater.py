@@ -88,6 +88,10 @@ RESTORE_PATHS = [
 ]
 FLSUN_KLIPPER_DROPIN = \
     "/etc/systemd/system/klipper.service.d/flsun_klipper_upstream.conf"
+# The mainboard firmware FLSUN_klipper's upstream Klipper last saw. FLSun's
+# Klipper only talks to FLSun's own firmware.
+FLSUN_KLIPPER_MCU_VERSION = "/home/pi/printer_data/flsun_klipper_mcu_version"
+STOCK_MCU_VERSION = "v0.10.0-439-gdfa5afdf"
 # Installed from system/: the file's name there, and where it goes.
 UNITS = [
     ("flsun_updater.service", "/etc/systemd/system/flsun_updater.service"),
@@ -1192,6 +1196,16 @@ def restore_member_ok(name, links):
     return not any(name.startswith(link + "/") for link in links)
 
 
+def flashed_mcu_version():
+    """The mainboard's firmware version if it isn't FLSun's, else None."""
+    try:
+        with open(FLSUN_KLIPPER_MCU_VERSION) as f:
+            version = f.read().strip()
+    except OSError:
+        return None
+    return version if version and version != STOCK_MCU_VERSION else None
+
+
 def restore_backup(point, name):
     """Puts back the Klipper backup <name>.tar.gz from the stick's
     flsun_restore folder. The files it replaces are moved aside, not
@@ -1246,8 +1260,14 @@ def restore_backup(point, name):
         log("  Unpacking failed; the moved files are still beside it")
         return False
     # FLSUN_klipper points the klipper service at upstream Klipper with a
-    # drop-in. A backup of FLSun's Klipper means running FLSun's again.
-    if ("home/pi/klipper" in tops
+    # drop-in. A backup of FLSun's Klipper means running FLSun's again,
+    # unless the mainboard was flashed and FLSun's can't talk to it.
+    mcu = flashed_mcu_version()
+    if "home/pi/klipper" in tops and mcu:
+        log("  Keeping upstream Klipper: the mainboard runs firmware %s, "
+            "which FLSun's Klipper can't talk to. Flash FLSun's firmware "
+            "back, then run switch_klipper.sh stock --force" % mcu)
+    elif ("home/pi/klipper" in tops
             and os.path.exists(FLSUN_KLIPPER_DROPIN)):
         os.replace(FLSUN_KLIPPER_DROPIN,
                    "%s.pre_restore-%s" % (FLSUN_KLIPPER_DROPIN, stamp))
