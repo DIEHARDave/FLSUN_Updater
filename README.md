@@ -1,5 +1,7 @@
 # FLSUN_Updater
 
+> **Parts:** the printers, boards, readers and other gear that go with this project are listed at [projects.die-hard.net/gear](https://projects.die-hard.net/gear) (Amazon affiliate links).
+
 Installs, updates and removes plugins for the **FLSun T1 Pro** from Mainsail, Fluidd or a macro, and fixes the parts of FLSun's system image that stop updates from working.
 
 ## What it fixes
