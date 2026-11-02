@@ -4,6 +4,16 @@
 
 Installs, updates and removes plugins for the **FLSun T1 Pro** from Mainsail, Fluidd or a macro, and fixes the parts of FLSun's system image that stop updates from working.
 
+## The regular T1 (not Pro)
+
+FLSUN_Updater has only been tested on a T1 Pro, but it doesn't check the model, and the T1 should run the same system image. On a T1:
+
+- **Expected to work, untested:** FLSUN_Updater's own fixes and the host-side plugins (`flsun_timelapse`, `flsun_remote_screen`, `flsun_notify`, `flsun_theme`, `fluidd`, `flsun_moonraker`).
+- **May need changes:** `flsun_macros` (some macros use Pro hardware, such as the chamber light) and `helixscreen` (its display and touch settings are the T1 Pro's).
+- **T1 Pro only for now:** `flsun_klipper`. Its hardware config and mainboard firmware are the T1 Pro's. Don't flash the mainboard of a T1.
+
+**If you try it on a T1, please let me know how it went**, whether it works or not, by [opening an issue](https://github.com/DIEHARDave/FLSUN_Updater/issues/new). The output of `cat /proc/device-tree/model`, your firmware version and your `printer.cfg` help add proper T1 support.
+
 ## What it fixes
 
 FLSun's system image can't reach GitHub as shipped, and its update manager can't update Mainsail. FLSUN_Updater fixes this at install and again at every boot:
