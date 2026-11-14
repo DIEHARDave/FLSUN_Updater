@@ -6,13 +6,15 @@ Installs, updates and removes plugins for the **FLSun T1 Pro** from Mainsail, Fl
 
 ## The regular T1 (not Pro)
 
-FLSUN_Updater has only been tested on a T1 Pro, but it doesn't check the model, and the T1 should run the same system image. On a T1:
+**Tested on a regular T1 by a T1 owner** ([#1](https://github.com/DIEHARDave/FLSUN_Updater/issues/1)), running the standard T1 Pro config since the first release:
 
-- **Expected to work, untested:** FLSUN_Updater's own fixes and the host-side plugins (`flsun_timelapse`, `flsun_remote_screen`, `flsun_notify`, `flsun_theme`, `fluidd`, `flsun_moonraker`).
-- **May need changes:** `flsun_macros` (some macros use Pro hardware, such as the chamber light) and `helixscreen` (its display and touch settings are the T1 Pro's).
-- **T1 Pro only for now:** `flsun_klipper`. Its hardware config and mainboard firmware are the T1 Pro's. Don't flash the mainboard of a T1.
+- **Works:** FLSUN_Updater's own fixes, HelixScreen and all the plugins.
+- **Pro-only features do nothing:** the T1 has no chamber light or other Pro extras, so the macros for them have nothing to switch. Nothing breaks.
+- **Not confirmed on a T1:** flashing the mainboard (FLSUN_klipper's [mcu/](https://github.com/DIEHARDave/FLSUN_klipper/tree/main/mcu)). The T1's mainboard is reported to be the same as the T1 Pro's, and the guided script now checks the chip, clock and serial port before it changes anything. Nobody has run it on a T1 yet. See [FLSUN_klipper's T1 notes](https://github.com/DIEHARDave/FLSUN_klipper/blob/main/mcu/README.md#the-regular-t1).
 
-**If you try it on a T1, please let me know how it went**, whether it works or not, by [opening an issue](https://github.com/DIEHARDave/FLSUN_Updater/issues/new). The output of `cat /proc/device-tree/model`, your firmware version and your `printer.cfg` help add proper T1 support.
+The T1 and the T1 Pro run the same system image and report the same board (`cat /proc/device-tree/model` gives `Rockchip RV1126 EVB DDR3 V13 Board flsun` on both), so FLSUN_Updater can't tell them apart and doesn't need to.
+
+**If you have a T1, reports are welcome**, especially of a mainboard flash, by [opening an issue](https://github.com/DIEHARDave/FLSUN_Updater/issues/new).
 
 ## What it fixes
 
