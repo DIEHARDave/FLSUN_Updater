@@ -91,7 +91,8 @@ FLSUN_KLIPPER_DROPIN = \
 # The mainboard firmware FLSUN_klipper's upstream Klipper last saw. FLSun's
 # Klipper only talks to FLSun's own firmware.
 FLSUN_KLIPPER_MCU_VERSION = "/home/pi/printer_data/flsun_klipper_mcu_version"
-STOCK_MCU_VERSION = "v0.10.0-439-gdfa5afdf"
+STOCK_MCU_VERSION = "v0.10.0-439-gdfa5afdf"   # T1 Pro
+STOCK_T1_VERSION = "v1.0.6.3"                 # regular T1, as v1.0.6.3-18-g9d78b20
 # Installed from system/: the file's name there, and where it goes.
 UNITS = [
     ("flsun_updater.service", "/etc/systemd/system/flsun_updater.service"),
@@ -1203,7 +1204,9 @@ def flashed_mcu_version():
             version = f.read().strip()
     except OSError:
         return None
-    return version if version and version != STOCK_MCU_VERSION else None
+    stock = (version in (STOCK_MCU_VERSION, STOCK_T1_VERSION)
+             or version.startswith(STOCK_T1_VERSION + "-"))
+    return version if version and not stock else None
 
 
 def restore_backup(point, name):
