@@ -2,19 +2,19 @@
 
 > **Parts:** the printers, boards, readers and other gear that go with this project are listed at [projects.die-hard.net/gear](https://projects.die-hard.net/gear) (Amazon affiliate links).
 
-Installs, updates and removes plugins for the **FLSun T1 Pro** from Mainsail, Fluidd or a macro, and fixes the parts of FLSun's system image that stop updates from working.
+Installs, updates and removes plugins for the **FLSun T1 Pro and T1** from Mainsail, Fluidd or a macro, and fixes the parts of FLSun's system image that stop updates from working.
 
-## The regular T1 (not Pro)
+## The regular T1 (not Pro): fully supported
 
 **Tested on a regular T1 by a T1 owner** ([#1](https://github.com/DIEHARDave/FLSUN_Updater/issues/1)), running the standard T1 Pro config since the first release:
 
 - **Works:** FLSUN_Updater's own fixes, HelixScreen and all the plugins.
 - **Pro-only features do nothing:** the T1 has no chamber light or other Pro extras, so the macros for them have nothing to switch. Nothing breaks.
-- **Not confirmed on a T1:** flashing the mainboard (FLSUN_klipper's [mcu/](https://github.com/DIEHARDave/FLSUN_klipper/tree/main/mcu)). The T1's mainboard is reported to be the same as the T1 Pro's, and the guided script now checks the chip, clock and serial port before it changes anything. Nobody has run it on a T1 yet. See [FLSUN_klipper's T1 notes](https://github.com/DIEHARDave/FLSUN_klipper/blob/main/mcu/README.md#the-regular-t1).
+- **Flashing the mainboard works on a T1** (FLSUN_klipper's [mcu/](https://github.com/DIEHARDave/FLSUN_klipper/tree/main/mcu)), confirmed 2026-11-16. The T1's mainboard has no bootloader, unlike the T1 Pro's, so the same guided script (`sudo python3 ~/FLSUN_klipper/mcu/mcu_update.py`) detects it and uses a T1-specific path. After the flash, the ADXL345 and `MEASURING_RESONANCES` work as on the T1 Pro. See [FLSUN_klipper's T1 notes](https://github.com/DIEHARDave/FLSUN_klipper/blob/main/mcu/README.md#the-regular-t1-no-bootloader).
 
 The T1 and the T1 Pro run the same system image and report the same board (`cat /proc/device-tree/model` gives `Rockchip RV1126 EVB DDR3 V13 Board flsun` on both), so FLSUN_Updater can't tell them apart and doesn't need to.
 
-**If you have a T1, reports are welcome**, especially of a mainboard flash, by [opening an issue](https://github.com/DIEHARDave/FLSUN_Updater/issues/new).
+**If you have a T1, reports are welcome**, especially of a T1 rollback (not tried on real hardware yet), by [opening an issue](https://github.com/DIEHARDave/FLSUN_Updater/issues/new).
 
 ## What it fixes
 
