@@ -45,6 +45,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
 | `flsun_moonraker` | [FLSUN_moonraker](https://github.com/DIEHARDave/FLSUN_moonraker): current upstream Moonraker in place of FLSun's 2023 version, updated from the update manager afterwards. It installs Python 3.13 beside the system's 3.7 and puts back the compiler FLSun removed. The install takes about 10 minutes, and Moonraker is down for the last minute. |
 | `flsun_klipper` | [FLSUN_klipper](https://github.com/DIEHARDave/FLSUN_klipper): current upstream Klipper in place of FLSun's 2022 fork, without flashing the mainboard. FLSun's Klipper stays installed beside it, and one command switches between them. Needs `flsun_moonraker` (see below). |
+| `flsun_pushraker` | [FLSUN_pushraker](https://github.com/DIEHARDave/FLSUN_pushraker): push notifications from [pushraker](https://github.com/noon92/pushraker) with a camera snapshot to ntfy, Pushover, Gotify, Telegram, Discord, a webhook or email, for print start, pause, progress, first layer, complete, cancel, faults and more. Set up on its own page at `http://<printer-ip>/notifications/` (also on Fluidd's port 81), with no restart. Needs `flsun_moonraker`. |
 | `helixscreen` | [HelixScreen](https://github.com/prestonbrown/helixscreen) in place of FLSun's stock screen (beta), from HelixScreen's own releases. They have no T1 Pro package, so it installs the Centauri Carbon one (`helixscreen-cc1.zip`, built for the same CPU and screen) and sets it up for the T1. HelixScreen's in-app updater is turned off; updates come from the update manager. |
 
 ### Plugins that depend on each other
@@ -52,6 +53,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | Plugin | Needs | Order |
 | --- | --- | --- |
 | `flsun_klipper` | `flsun_moonraker` | **Install `flsun_moonraker` first**, or turn both on at the same time: plugins turned on together are installed in the order of the table above, so Moonraker comes first. Turned on alone, `flsun_klipper` stops with a message and changes nothing. Turning `flsun_moonraker` off later doesn't break `flsun_klipper`, because Python 3.13 and the compiler stay. |
+| `flsun_pushraker` | `flsun_moonraker` | **Install `flsun_moonraker` first**, or turn both on at the same time. Turned on alone, `flsun_pushraker` stops with a message and changes nothing. pushraker runs inside Moonraker, so turning `flsun_moonraker` off (back to FLSun's Moonraker on Python 3.7) means turning `flsun_pushraker` off first. |
 
 The other plugins don't depend on each other and can be turned on in any order:
 
