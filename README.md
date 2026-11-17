@@ -39,7 +39,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 | --- | --- |
 | `flsun_timelapse` | [FLSUN_Timelapse](https://github.com/DIEHARDave/FLSUN_Timelapse): timelapse videos in Mainsail with no need for FLSun phone app to retrive videos. |
 | `flsun_remote_screen` | [FLSUN_RemoteScreen](https://github.com/DIEHARDave/FLSUN_RemoteScreen): view and control the touchscreen from a browser at `http://<printer-ip>/screen/` |
-| `flsun_notify` | [FLSUN_notify](https://github.com/DIEHARDave/FLSUN_notify): print notifications with a camera photo to Telegram, Discord, Matrix and [many more services](https://github.com/caronc/apprise/wiki) |
+| `flsun_notify` | **Retired**, use `flsun_pushraker`. [FLSUN_notify](https://github.com/DIEHARDave/FLSUN_notify) is archived. It keeps working where it's installed, and it stays listed so you can turn it off: set `flsun_notify: no` and `flsun_pushraker: yes`. |
 | `flsun_macros` | [FLSUN_Macros](https://github.com/DIEHARDave/FLSUN_Macros): `PRINT_START` and `PRINT_END` (heat soak and Z offset per material, a bed mesh per bed temperature, a prime line), pause at layer (`SET_PAUSE_AT_LAYER`), and macros for filament, PID tuning and the chamber light. The Orca profile below needs it. |
 | `flsun_theme` | [FLSUN_theme](https://github.com/DIEHARDave/FLSUN_theme): FLSun's theme (logo and backgrounds) for Mainsail, and as the FLSUN theme in Fluidd; your previous theme folders are backed up and put back when you disable it |
 | `fluidd` | [Fluidd](https://github.com/fluidd-core/fluidd) at `http://<printer-ip>:81`, beside Mainsail on port 80, from Fluidd's own releases. Both show the same cameras, and FLSUN_RemoteScreen's `/screen/` works in both. |
@@ -57,7 +57,7 @@ The plugin list is [extra_plugins.moonraker.conf](extra_plugins.moonraker.conf):
 
 The other plugins don't depend on each other and can be turned on in any order:
 
-- `flsun_timelapse`, `flsun_remote_screen` and `flsun_notify` make the same system fixes, so whichever comes first does them. Timelapse and notify use the printer's camera, and the Screen webcam that `flsun_remote_screen` adds is listed after it.
+- `flsun_timelapse` and `flsun_remote_screen` make the same system fixes, so whichever comes first does them. Timelapse and pushraker use the printer's camera, and the Screen webcam that `flsun_remote_screen` adds is listed after it.
 - `flsun_theme` gives Fluidd an FLSUN theme preset when `fluidd` is installed, before or after the theme, and puts it back after each Fluidd update.
 - `flsun_macros` works with FLSun's Klipper and with `flsun_klipper`, which uses an upstream version of its pause-at-layer macros automatically.
 - `flsun_remote_screen` follows whichever screen is running: FLSun's or `helixscreen`.
