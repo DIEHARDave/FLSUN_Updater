@@ -108,7 +108,14 @@ The installer restarts Moonraker, and Klipper too unless a print is running (Kli
 
 ## Use
 
-From the console in Mainsail or Fluidd:
+The easiest way is the **PLUGINS** macro (a button in Mainsail's and Fluidd's Macros panel, or type `PLUGINS` in the console). It opens a window with one row per plugin:
+
+- The left button installs or removes the plugin. It's green when the plugin is installed.
+- The right button, **Update: On/Off**, shows the plugin in the update manager or leaves it out. With Off, the plugin stays installed as it is and isn't updated.
+
+A click turns the button orange, meaning changed but not saved yet. Clicking it again undoes the change. **Save** applies all the changes at once, after any running print. **Close** throws them away.
+
+The same can be done from the console:
 
 ```
 LIST_PLUGINS
@@ -122,7 +129,13 @@ The macros set the plugin to `yes` or `no` in **flsun_plugins.cfg**, which you c
 [plugins]
 flsun_timelapse: yes
 flsun_remote_screen: no
+
+[updates]
+flsun_timelapse: yes
+flsun_remote_screen: yes
 ```
+
+`[updates]` is what the window's Update buttons set. With `no`, the plugin's update manager entry is left out, or commented out with `#` if the plugin's own installer added it. With `yes`, the entry goes back as it was. Moonraker restarts after either change so the update manager sees it.
 
 When the file changes, the printer installs or removes plugins within a few seconds. If a print is running, it waits until the print finishes, because installers restart Klipper or the screen. Progress is logged in **logs/flsun_updater.log**. Plugins that were installed before FLSUN_Updater are detected and start as `yes`. Each `type: web` plugin also gets a section, such as `[helixscreen]`, with its release `channel` (`stable` or `beta`).
 

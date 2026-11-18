@@ -4,6 +4,9 @@
 #    klipper/flsun_updater_macros.cfg) call the remote methods registered
 #    here, which set the plugin to yes or no in flsun_plugins.cfg. Saving
 #    that file starts flsun_updater.service, which installs or removes it.
+#    PLUGINS opens a Mainsail/Fluidd window, like Z-Mod's, to do the same
+#    from buttons and to turn each plugin's updates on or off ([updates]
+#    in flsun_plugins.cfg).
 #
 # 2. Release updates. Takes over the [update_manager <name>] type: web
 # sections named in web_clients, and fixes what FLSun's older Moonraker gets
@@ -46,6 +49,7 @@ if TYPE_CHECKING:
 STAGING = pathlib.Path("~/printer_data/flsun_updater").expanduser()
 SELECTION = pathlib.Path("~/printer_data/config/flsun_plugins.cfg").expanduser()
 CHOICE_RE = re.compile(r"^([A-Za-z0-9_]+)\s*[:=]\s*(\S+)")
+ON_WORDS = ("yes", "true", "on", "1")
 APPLY_SERVICE = "flsun_updater_web"
 APPLY_TIMEOUT = 15 * 60
 
@@ -231,6 +235,14 @@ class FlsunPlugins:
             "flsun_plugin_set", self._remote_set)
         self.server.register_remote_method(
             "flsun_plugin_list", self._remote_list)
+        self._pending: Dict[Tuple[str, str], bool] = {}
+        for method, func in (
+                ("flsun_plugin_menu", self._remote_menu),
+                ("flsun_plugin_menu_toggle", self._remote_menu_toggle),
+                ("flsun_plugin_menu_updates", self._remote_menu_updates),
+                ("flsun_plugin_menu_save", self._remote_menu_save),
+                ("flsun_plugin_menu_close", self._remote_menu_close)):
+            self.server.register_remote_method(method, func)
         names: List[str] = config.getlist("web_clients", [], separator=None)
         if not names:
             return
@@ -301,6 +313,156 @@ class FlsunPlugins:
         self._respond(f"{action} {name}. It happens after any running "
                       "print finishes; progress is in "
                       "logs/flsun_updater.log")
+
+    # ------------------------------------------------------- PLUGINS menu
+    #
+    # A Mainsail/Fluidd dialog like Z-Mod's PLUGINS: one row per plugin,
+    # the plugin's button (installed or not) and its Update button (listed
+    # in the update manager or not). Clicks only mark changes; Save writes
+    # them to flsun_plugins.cfg in one go, which starts FLSUN_Updater.
+    # The dialog is drawn with "// action:prompt_..." lines, the same as
+    # Klipper's RESPOND TYPE=command sends.
+
+    def _prompt(self, *lines: str) -> None:
+        for line in lines:
+            self.server.send_event("server:gcode_response",
+                                   f"// action:{line}")
+
+    def _menu_rows(self) -> List[Dict[str, Any]]:
+        lines = SELECTION.read_text().splitlines() if SELECTION.exists() else []
+        rows: List[Dict[str, Any]] = []
+        updates: Dict[str, bool] = {}
+        section = ""
+        for i, line in enumerate(lines):
+            if line.startswith("["):
+                section = line.strip()
+                continue
+            m = CHOICE_RE.match(line)
+            if not m:
+                continue
+            name, on = m.group(1).lower(), m.group(2).lower() in ON_WORDS
+            if section == "[plugins]":
+                # Above each choice: "# Title: description", then its URL
+                title = name
+                if i >= 2 and lines[i - 2].startswith("# "):
+                    title = lines[i - 2][2:].split(": ", 1)[0].strip() or name
+                rows.append({"name": name, "title": title, "on": on})
+            elif section == "[updates]":
+                updates[name] = on
+        for row in rows:
+            row["updates"] = updates.get(row["name"], True)
+        return rows
+
+    def _menu_show(self) -> None:
+        rows = self._menu_rows()
+        if not rows:
+            self._respond("FLSUN_Updater is still setting up; try again "
+                          "in a minute")
+            return
+        out = ["prompt_begin Plugins (FLSUN_Updater)",
+               "prompt_text Left: install or remove. Right: list it in the "
+               "update manager or not. Orange: changed; Save applies it "
+               "(after any running print)."]
+        for row in rows:
+            name = row["name"]
+            on = self._pending.get(("plugin", name), row["on"])
+            upd = self._pending.get(("updates", name), row["updates"])
+            color = ("warning" if ("plugin", name) in self._pending
+                     else "success" if on else "secondary")
+            ucolor = ("warning" if ("updates", name) in self._pending
+                      else "success" if upd else "secondary")
+            out += [
+                "prompt_button_group_start",
+                f"prompt_button {row['title']}|"
+                f"_FLSUN_PLUGIN_MENU_TOGGLE NAME={name}|{color}",
+                f"prompt_button Update: {'On' if upd else 'Off'}|"
+                f"_FLSUN_PLUGIN_MENU_UPDATES NAME={name}|{ucolor}",
+                "prompt_button_group_end",
+            ]
+        out += [
+            "prompt_footer_button Save|_FLSUN_PLUGIN_MENU_SAVE|"
+            + ("warning" if self._pending else "success"),
+            "prompt_footer_button Close|_FLSUN_PLUGIN_MENU_CLOSE|secondary",
+            "prompt_show",
+        ]
+        self._prompt(*out)
+
+    def _remote_menu(self) -> None:
+        self._pending = {}
+        self._menu_show()
+
+    def _menu_flip(self, kind: str, name: str) -> None:
+        name = str(name).strip().lower()
+        row = next((r for r in self._menu_rows() if r["name"] == name), None)
+        if row is None:
+            self._respond(f"No plugin named '{name}'")
+            return
+        saved = row["on"] if kind == "plugin" else row["updates"]
+        current = self._pending.get((kind, name), saved)
+        if not current == saved:
+            # Clicked back to what is saved: no change
+            self._pending.pop((kind, name), None)
+        else:
+            self._pending[(kind, name)] = not saved
+        self._menu_show()
+
+    def _remote_menu_toggle(self, name: str = "") -> None:
+        self._menu_flip("plugin", name)
+
+    def _remote_menu_updates(self, name: str = "") -> None:
+        self._menu_flip("updates", name)
+
+    def _remote_menu_close(self) -> None:
+        self._pending = {}
+        self._prompt("prompt_end")
+
+    def _remote_menu_save(self) -> None:
+        pending, self._pending = self._pending, {}
+        self._prompt("prompt_end")
+        if not pending:
+            self._respond("Plugins: nothing changed")
+            return
+        lines = SELECTION.read_text().splitlines() if SELECTION.exists() else []
+        if not lines:
+            self._respond("FLSUN_Updater is still setting up; try again "
+                          "in a minute")
+            return
+        found: Dict[Tuple[str, str], int] = {}
+        updates_at = -1
+        section = ""
+        for i, line in enumerate(lines):
+            if line.startswith("["):
+                section = line.strip()
+                if section == "[updates]":
+                    updates_at = i
+                continue
+            m = CHOICE_RE.match(line)
+            if m and section in ("[plugins]", "[updates]"):
+                kind = "plugin" if section == "[plugins]" else "updates"
+                found[(kind, m.group(1).lower())] = i
+        added: List[str] = []
+        done: List[str] = []
+        for (kind, name), value in sorted(pending.items()):
+            text = f"{name}: {'yes' if value else 'no'}"
+            if (kind, name) in found:
+                lines[found[(kind, name)]] = text
+            elif kind == "updates":
+                added.append(text)
+            if kind == "plugin":
+                done.append(f"{'installing' if value else 'removing'} {name}")
+            else:
+                done.append(f"updates {'on' if value else 'off'} for {name}")
+        if added:
+            if updates_at < 0:
+                lines += ["", "[updates]"]
+                updates_at = len(lines) - 1
+            lines[updates_at + 1:updates_at + 1] = added
+        # Saving the file starts flsun_updater.service (flsun_updater.path).
+        SELECTION.write_text("\n".join(lines) + "\n")
+        self._respond("Plugins: " + ", ".join(done) + ". It happens after "
+                      "any running print; progress is in "
+                      "logs/flsun_updater.log, and Moonraker restarts if "
+                      "the update manager changes.")
 
     def _remote_list(self) -> None:
         lines, found = self._read_choices()

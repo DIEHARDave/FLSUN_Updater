@@ -591,21 +591,72 @@ def save_state(state):
     write_if_changed(STATE, json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
-def has_update_section(name):
-    """True if a config file other than ours declares [update_manager name].
-    Moonraker refuses to start when a section is declared twice."""
-    pattern = re.compile(
-        r"^\[update_manager\s+(client\s+)?%s\]" % re.escape(name), re.M)
-    for path in glob.glob(os.path.join(CONFIG_DIR, "*.conf")):
+def update_header_re(name, commented=False):
+    return re.compile(r"^%s\[update_manager\s+(client\s+)?%s\]\s*$"
+                      % ("#" if commented else "", re.escape(name)))
+
+
+def own_update_file(name):
+    """The config file other than ours that declares [update_manager name],
+    e.g. one a plugin's installer added, or None. A section switched off
+    with updates: no (commented out with #) counts too. Moonraker refuses
+    to start when a section is declared twice."""
+    active, commented = update_header_re(name), update_header_re(name, True)
+    for path in sorted(glob.glob(os.path.join(CONFIG_DIR, "*.conf"))):
         if path == GENERATED:
             continue
         try:
             with open(path, errors="replace") as f:
-                if pattern.search(f.read()):
-                    return True
+                lines = f.read().splitlines()
         except OSError:
-            pass
-    return False
+            continue
+        if any(active.match(l) or commented.match(l) for l in lines):
+            return path
+    return None
+
+
+def update_block(lines, name, commented):
+    """(first, end) line indexes of the [update_manager name] section, as
+    written or commented out with #, or None."""
+    header = update_header_re(name, commented)
+    for i, line in enumerate(lines):
+        if not header.match(line):
+            continue
+        j = i + 1
+        while j < len(lines):
+            t = lines[j].strip()
+            if commented:
+                if not t.startswith("#") or t.startswith("#["):
+                    break
+            elif t.startswith(("[", "#[")):
+                break
+            j += 1
+        while j > i + 1 and not lines[j - 1].strip():
+            j -= 1
+        return i, j
+    return None
+
+
+def set_own_entry(path, name, enabled):
+    """Comments a plugin's own update manager section out (updates: no in
+    flsun_plugins.cfg) or back in. Returns True if the file changed."""
+    with open(path, errors="replace") as f:
+        lines = f.read().split("\n")
+    block = update_block(lines, name, commented=enabled)
+    if not block:
+        return False
+    for k in range(*block):
+        if enabled:
+            if lines[k].startswith("#"):
+                lines[k] = lines[k][1:]
+        elif lines[k].strip():
+            lines[k] = "#" + lines[k]
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+    give_to_user(path)
+    log("Updates for %s turned %s in %s"
+        % (name, "on" if enabled else "off", os.path.basename(path)))
+    return True
 
 
 def release_info(root):
@@ -656,7 +707,27 @@ def read_selection():
     return choices, channels
 
 
-def write_selection(plugins, choices, channels):
+def read_updates_off():
+    """The plugins set to no in flsun_plugins.cfg's [updates] section: the
+    update manager doesn't list them."""
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(SELECTION)
+    except configparser.Error:
+        return set()
+    off = set()
+    if parser.has_section("updates"):
+        for name in parser.options("updates"):
+            try:
+                if not parser.getboolean("updates", name):
+                    off.add(name)
+            except ValueError:
+                log("%s: [updates] '%s' is not yes or no; updates stay on"
+                    % (os.path.basename(SELECTION), name))
+    return off
+
+
+def write_selection(plugins, choices, channels, updates_off=()):
     lines = [
         "# FLSUN_Updater: choose which plugins are installed on this printer.",
         "# Set a plugin to yes to install it or no to remove it, then save.",
@@ -675,6 +746,15 @@ def write_selection(plugins, choices, channels):
             "%s: %s" % (p["name"], "yes" if choices[p["name"]] else "no"),
             "",
         ]
+    lines += [
+        "[updates]",
+        "# Updates in Mainsail's and Fluidd's update manager, for each",
+        "# installed plugin: yes (listed) or no (left out). The PLUGINS macro",
+        "# sets these too.",
+    ]
+    lines += ["%s: %s" % (p["name"], "no" if p["name"] in updates_off
+                          else "yes") for p in plugins]
+    lines.append("")
     for p in plugins:
         if p["kind"] == "web":
             lines += [
@@ -942,16 +1022,23 @@ def render_section(name, options):
     return "\n".join(lines) + "\n"
 
 
-def write_update_entries(plugins, state, channels):
+def write_update_entries(plugins, state, channels, updates_off=()):
     """Copies the entries of installed plugins into
-    flsun_updater_plugins.conf. Returns True if Moonraker needs a restart to
-    see the change."""
+    flsun_updater_plugins.conf, leaving out those whose updates are off.
+    Returns True if Moonraker needs a restart to see the change."""
     blocks, services, web = [], [], []
+    own_changed = False
     for p in plugins:
         if not is_installed(p, state):
             continue
-        if has_update_section(p["name"]):
-            # e.g. our FLSUN_ plugins' installers add their own entry.
+        own = own_update_file(p["name"])
+        if own:
+            # e.g. our FLSUN_ plugins' installers add their own entry;
+            # updates: no comments it out there.
+            own_changed = set_own_entry(
+                own, p["name"], p["name"] not in updates_off) or own_changed
+            continue
+        if p["name"] in updates_off:
             continue
         options = list(p["moonraker"])
         if p["kind"] == "web":
@@ -982,7 +1069,8 @@ def write_update_entries(plugins, state, channels):
                      "# Written by FLSUN_Updater on every run; don't edit. "
                      "Update\n# manager entries for the plugins it installs."
                      "\n\n" + entries)
-    changed = old_entries != re.sub(r"^\n", "", entries, flags=re.M)
+    changed = (old_entries != re.sub(r"^\n", "", entries, flags=re.M)
+               or own_changed)
     if services and os.path.exists(ASVC):
         with open(ASVC) as f:
             current = f.read()
@@ -1064,7 +1152,8 @@ def sync_plugins():
         log("%s: '%s' is not in the plugin list; ignored"
             % (os.path.basename(SELECTION), name))
     apply_recovery(plugins, choices)
-    write_selection(plugins, choices, channels)
+    updates_off = read_updates_off()
+    write_selection(plugins, choices, channels, updates_off)
 
     todo = [p for p in plugins if choices[p["name"]] != installed[p["name"]]]
     if todo:
@@ -1084,7 +1173,7 @@ def sync_plugins():
                 and is_installed(p, state)):
             call_hook(p, "at_boot")
 
-    restart = write_update_entries(plugins, state, channels)
+    restart = write_update_entries(plugins, state, channels, updates_off)
     restart = ensure_component() or restart
     restart = ensure_include() or restart
     if restart:
