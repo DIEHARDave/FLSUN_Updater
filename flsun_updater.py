@@ -420,6 +420,29 @@ def fix_old_logs():
         log("Removed old klippy.log.1 to .3 (%.0f MB)" % (removed / 1048576))
 
 
+CONFIG_BACKUP_RE = re.compile(r"^(.+)-(\d{8}_\d{6})\.cfg$")
+CONFIG_BACKUPS_KEPT = 5
+
+
+def fix_config_backups():
+    """Klipper's SAVE_CONFIG copies the config to <name>-YYYYMMDD_HHMMSS.cfg
+    each time and never removes old copies; FLSun's image arrives with
+    dozens from factory calibration. Only the newest five of each config
+    (printer.cfg, printer_upstream.cfg, ...) are kept."""
+    groups = {}
+    for name in os.listdir(CONFIG_DIR):
+        m = CONFIG_BACKUP_RE.match(name)
+        if m and os.path.isfile(os.path.join(CONFIG_DIR, name)):
+            groups.setdefault(m.group(1), []).append((m.group(2), name))
+    for base, items in sorted(groups.items()):
+        old = sorted(items)[:-CONFIG_BACKUPS_KEPT]
+        for _stamp, name in old:
+            os.remove(os.path.join(CONFIG_DIR, name))
+        if old:
+            log("Removed %d old %s.cfg backups (kept the newest %d)"
+                % (len(old), base, CONFIG_BACKUPS_KEPT))
+
+
 def fix_refresh_times():
     """Repairs updaters that last checked for updates while the clock was
     wrong. A check made with the clock in the future leaves a refresh time
@@ -1467,7 +1490,7 @@ def cmd_run(_args):
             log("apply_restore failed:\n%s" % traceback.format_exc())
     for step in (fix_hosts, fix_failed_units, fix_certificates, check_git,
                  ensure_units, fix_web_clients, fix_nginx_logs, fix_old_logs,
-                 sync_plugins, fix_refresh_times):
+                 fix_config_backups, sync_plugins, fix_refresh_times):
         try:
             step()
         except Exception:
