@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 STAGING = pathlib.Path("~/printer_data/flsun_updater").expanduser()
 SELECTION = pathlib.Path("~/printer_data/config/flsun_plugins.cfg").expanduser()
-CHOICE_RE = re.compile(r"^([A-Za-z0-9_]+)\s*[:=]\s*(\S+)")
+CHOICE_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*[:=]\s*(\S+)")
 ON_WORDS = ("yes", "true", "on", "1")
 APPLY_SERVICE = "flsun_updater_web"
 APPLY_TIMEOUT = 15 * 60

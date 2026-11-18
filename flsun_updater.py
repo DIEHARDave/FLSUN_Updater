@@ -113,7 +113,10 @@ WEB_LOCK = "/run/flsun_updater_web.lock"
 MOONRAKER = "http://127.0.0.1:7125"
 # FLSun's image boots with a stale clock; a time before this isn't real.
 CLOCK_VALID_AFTER = 1790000000  # 2026-09-21
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+# Plugin names (as in Kiln OS and Zmod, hyphens allowed: diehard-pushraker)
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# Backup names on a USB stick (restore_backup)
+BACKUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 USER_ENV = {
@@ -1327,7 +1330,7 @@ def restore_backup(point, name):
     deleted. Returns True if it was restored."""
     import hashlib
     import tarfile
-    if not NAME_RE.match(name):
+    if not BACKUP_NAME_RE.match(name):
         log("  restore '%s': not a backup name; ignored" % name)
         return False
     archive = os.path.join(point, RESTORE_DIR, name + ".tar.gz")
