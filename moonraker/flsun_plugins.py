@@ -20,6 +20,12 @@
 # flsun_updater_web.service (flsun_updater.py web-apply), which also runs the
 # plugin's hooks, e.g. restarting the screen.
 #
+# 3. Update all. Takes over Moonraker's full update, so Mainsail's and
+#    Fluidd's "Update all components" button installs every update except
+#    the OS packages, and skips repos it can't update (local changes,
+#    invalid) instead of stopping there. UPDATE_ALL [CHECK=1] does the same
+#    from the console and shows the progress there.
+#
 # Installed by FLSUN_Updater as a symlink in Moonraker's components folder.
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
@@ -52,6 +58,42 @@ CHOICE_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*[:=]\s*(\S+)")
 ON_WORDS = ("yes", "true", "on", "1")
 APPLY_SERVICE = "flsun_updater_web"
 APPLY_TIMEOUT = 15 * 60
+
+# Update all: never the OS packages (the "System" row; it can still be
+# updated on its own). Klipper and Moonraker go last, as in Moonraker's own
+# full update. flsun_updater goes just before them: its service run can
+# restart Moonraker when the update manager entries change.
+SKIP_ALL = ("system",)
+LAST = ("flsun_updater", "klipper", "moonraker")
+# Moonraker's full update stops at the first repo it can't update; these
+# are left out with a reason instead.
+UPDATE_PROBLEMS = (
+    ("is_valid", False, "not a valid install"),
+    ("is_dirty", True, "repo has local changes"),
+    ("corrupt", True, "repo is corrupt"),
+    ("detached", True, "repo is on a detached HEAD"),
+    ("channel_invalid", True, "configured channel is invalid"),
+)
+DOWNLOAD_RE = re.compile(r"^Downloading .*\[\d+%\]$")
+
+
+def has_update(info: Dict[str, Any]) -> bool:
+    if info.get("configured_type") == "git_repo":
+        behind = info.get("commits_behind_count")
+        if behind is None:
+            behind = len(info.get("commits_behind") or [])
+        return behind > 0
+    remote = info.get("remote_version")
+    if not remote or remote == "?":
+        return False
+    return info.get("version") != remote
+
+
+def update_problem(info: Dict[str, Any]) -> Optional[str]:
+    for key, bad, reason in UPDATE_PROBLEMS:
+        if key in info and info[key] == bad:
+            return reason
+    return None
 
 
 class FlsunWebDeploy(WebBase):
@@ -243,16 +285,22 @@ class FlsunPlugins:
                 ("flsun_plugin_menu_save", self._remote_menu_save),
                 ("flsun_plugin_menu_close", self._remote_menu_close)):
             self.server.register_remote_method(method, func)
-        names: List[str] = config.getlist("web_clients", [], separator=None)
-        if not names:
-            return
+        self.server.register_remote_method(
+            "flsun_update_all", self._remote_update_all)
+        self.server.register_event_handler(
+            "update_manager:update_response", self._on_update_response)
+        self._console_run = False
+        self.full_hooked = False
         # Optional components load in no fixed order; update_manager must
-        # have built its updaters before they can be replaced.
-        umgr = self.server.load_component(config, "update_manager", None)
-        if umgr is None:
+        # have built its updaters and endpoints before they can be replaced.
+        self.umgr = self.server.load_component(config, "update_manager", None)
+        if self.umgr is None:
             self.server.add_warning(
                 "[flsun_plugins]: update_manager is not loaded")
             return
+        self.full_hooked = self._hook_full_update()
+        names: List[str] = config.getlist("web_clients", [], separator=None)
+        umgr = self.umgr
         for name in names:
             section = f"update_manager {name}"
             if section not in config.sections():
@@ -267,6 +315,216 @@ class FlsunPlugins:
                     f"[flsun_plugins]: can't manage {name}: {e}")
             else:
                 logging.info(f"flsun_plugins: managing {name}")
+
+    # -------------------------------------------------------- update all
+
+    def _hook_full_update(self) -> bool:
+        """Route Moonraker's full update (Mainsail's and Fluidd's "Update
+        all" button) to _full_update, which leaves out the OS packages."""
+        umgr = self.umgr
+        needed = (hasattr(umgr, "cmd_request_lock")
+                  and hasattr(umgr, "kconn")
+                  and hasattr(umgr.cmd_helper, "set_full_complete"))
+        if not needed:
+            logging.info("flsun_plugins: this Moonraker's update manager is "
+                         "not supported, Update all stays as it is")
+            return False
+        # /machine/update/upgrade and /client without a name look the
+        # method up on the instance at call time.
+        umgr._handle_full_update_request = self._full_update
+        # /machine/update/full keeps the method it was registered with, in
+        # its (frozen) APIDefinition, shared by HTTP and JSON-RPC.
+        api = None
+        try:
+            from ..common import APIDefinition
+            api = APIDefinition.get_cache().get("/machine/update/full")
+        except (ImportError, AttributeError):
+            app = getattr(self.server, "moonraker_app", None)
+            api = getattr(app, "api_cache", {}).get("/machine/update/full")
+        if api is None:
+            logging.info("flsun_plugins: /machine/update/full not found")
+        else:
+            object.__setattr__(api, "callback", self._full_update)
+        logging.info("flsun_plugins: Update all leaves out the OS packages")
+        return True
+
+    def _update_plan(self) -> Tuple[List[str], List[Tuple[str, str]]]:
+        """The updaters with an update, in install order, and the ones left
+        out with the reason."""
+        todo: List[str] = []
+        skipped: List[Tuple[str, str]] = []
+        for name, updater in list(self.umgr.updaters.items()):
+            if name in SKIP_ALL:
+                continue
+            try:
+                info = updater.get_update_status()
+            except Exception:
+                continue
+            if not info.get("configured_type") or not has_update(info):
+                continue
+            reason = update_problem(info)
+            if reason:
+                skipped.append((name, reason))
+            else:
+                todo.append(name)
+        todo.sort(key=lambda n: LAST.index(n) if n in LAST else -1)
+        return todo, skipped
+
+    async def _full_update(self, web_request: Any) -> str:
+        umgr = self.umgr
+        ch = umgr.cmd_helper
+        if umgr.kconn.is_printing():
+            raise self.server.error("Update Refused: Klippy is printing", 503)
+        if ch.is_update_busy():
+            raise self.server.error("An update is already running", 503)
+        async with umgr.cmd_request_lock:
+            ch.set_update_info("full", id(web_request), True)
+            ch.notify_update_response(
+                "Preparing full software update (OS packages are left out, "
+                "update System on its own)...")
+            done: List[str] = []
+            failed: List[str] = []
+            try:
+                todo, skipped = self._update_plan()
+                for name, reason in skipped:
+                    ch.notify_update_response(f"Skipping {name}: {reason}")
+                for name in todo:
+                    if umgr.kconn.is_printing():
+                        ch.notify_update_response(
+                            f"A print started, stopping before {name}")
+                        break
+                    try:
+                        await self._update_one(name)
+                    except Exception as e:
+                        logging.exception(f"flsun_plugins: updating {name}")
+                        ch.notify_update_response(
+                            f"Error updating {name}: {e}")
+                        failed.append(name)
+                    else:
+                        done.append(name)
+                summary = "Full Update Complete"
+                if not todo:
+                    summary += ", everything was up to date"
+                else:
+                    summary += f", updated {len(done)}"
+                    if done:
+                        summary += ": " + ", ".join(done)
+                if failed:
+                    summary += ". Failed: " + ", ".join(failed)
+                ch.set_full_complete(True)
+                ch.notify_update_response(summary, is_complete=True)
+            except Exception as e:
+                ch.set_full_complete(True)
+                ch.notify_update_response(
+                    f"Full update stopped: {e}", is_complete=True)
+                raise
+            finally:
+                ch.clear_update_info()
+        return "ok"
+
+    async def _update_one(self, name: str) -> None:
+        """One updater, as Moonraker's own full update does it."""
+        umgr = self.umgr
+        ch = umgr.cmd_helper
+        updater = umgr.updaters[name]
+        if name == "klipper":
+            umgr.klippy_identified_evt = asyncio.Event()
+            try:
+                check_restart = await updater.update()
+                if ch.needs_service_restart(name):
+                    await updater.restart_service()
+                    check_restart = True
+                if check_restart:
+                    ch.notify_update_response(
+                        "Waiting for Klippy to reconnect (this may take up "
+                        "to 2 minutes)...")
+                    try:
+                        await asyncio.wait_for(
+                            umgr.klippy_identified_evt.wait(), 120.)
+                    except asyncio.TimeoutError:
+                        ch.notify_update_response(
+                            "Klippy reconnect timed out...")
+                    else:
+                        ch.notify_update_response("Klippy Reconnected")
+            finally:
+                umgr.klippy_identified_evt = None
+        elif name == "moonraker":
+            await updater.update()
+            if ch.needs_service_restart(name):
+                await updater.restart_service()
+        else:
+            await updater.update()
+
+    async def _refresh_all(self) -> None:
+        """Refresh every updater except the OS packages (slow, and not
+        installed here anyway)."""
+        umgr = self.umgr
+        async with umgr.cmd_request_lock:
+            for name, updater in list(umgr.updaters.items()):
+                if name in SKIP_ALL:
+                    continue
+                try:
+                    await updater.refresh()
+                except Exception as e:
+                    logging.info(f"flsun_plugins: refresh {name}: {e}")
+        umgr.cmd_helper.notify_update_refreshed()
+
+    def _on_update_response(self, notification: Dict[str, Any]) -> None:
+        # UPDATE_ALL from the console: show the progress there too.
+        if not self._console_run:
+            return
+        msg = str(notification.get("message", "")).strip()
+        if not msg or DOWNLOAD_RE.match(msg):
+            return
+        for line in msg.splitlines()[:5]:
+            self._respond(f"UPDATE_ALL: {line}")
+
+    def _remote_update_all(self, check: int = 0) -> None:
+        if self.umgr is None or not self.full_hooked:
+            self._respond("UPDATE_ALL: this Moonraker is not supported, use "
+                          "Update all in Mainsail or Fluidd")
+            return
+        if self._console_run or self.umgr.cmd_helper.is_update_busy():
+            self._respond("UPDATE_ALL: an update is already running")
+            return
+        self._console_run = True
+        self.server.get_event_loop().register_callback(
+            self._console_update_all, bool(int(check)))
+
+    async def _console_update_all(self, check: bool) -> None:
+        try:
+            if self.umgr.kconn.is_printing():
+                self._respond("UPDATE_ALL: refused, the printer is printing")
+                return
+            self._respond("UPDATE_ALL: checking for updates...")
+            await self._refresh_all()
+            todo, skipped = self._update_plan()
+            if check or not todo:
+                # Otherwise _full_update reports them.
+                for name, reason in skipped:
+                    self._respond(f"UPDATE_ALL: skipping {name}: {reason}")
+            if not todo:
+                self._respond("UPDATE_ALL: everything is up to date (OS "
+                              "packages are not checked)")
+                return
+            status = {n: self.umgr.updaters[n].get_update_status()
+                      for n in todo}
+            self._respond(f"UPDATE_ALL: {len(todo)} update(s): " + ", ".join(
+                f"{n} {status[n].get('version')} -> "
+                f"{status[n].get('remote_version')}" for n in todo))
+            if check:
+                self._respond("UPDATE_ALL: check only, run UPDATE_ALL to "
+                              "install them")
+                return
+            if "moonraker" in todo:
+                self._respond("UPDATE_ALL: Moonraker goes last and restarts "
+                              "itself; the update is done when it is back")
+            await self._full_update(object())
+        except Exception as e:
+            logging.exception("flsun_plugins: UPDATE_ALL")
+            self._respond(f"UPDATE_ALL: stopped: {e}")
+        finally:
+            self._console_run = False
 
     # ------------------------------------------------------------ macros
 

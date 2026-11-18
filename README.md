@@ -144,6 +144,19 @@ When the file changes, the printer installs or removes plugins within a few seco
 
 Installed plugins, FLSUN_Updater itself and Mainsail show up in the update manager (**Machine** page in Mainsail, **Settings → Software Updates** in Fluidd), where you update them as usual. When FLSUN_Updater updates and the list has new plugins, they're added to `flsun_plugins.cfg` set to `no`.
 
+### Update all
+
+**Update all components** in Mainsail (**Update all** in Fluidd) installs every update **except the System packages**. To update those, use the System row's own button. Repos that can't be updated are skipped with the reason, such as local changes, instead of ending the whole run. FLSUN_Updater, Klipper and Moonraker go last, and Moonraker restarts once at the end.
+
+The same works from the console:
+
+```
+UPDATE_ALL           install every update, progress shows in the console
+UPDATE_ALL CHECK=1   only list the available updates
+```
+
+`UPDATE_ALL` checks for updates first, then works like the button. Nothing on the T1 needs a reboot after an update; the services restart by themselves. This needs upstream Moonraker ([FLSUN_moonraker](https://github.com/DIEHARDave/FLSUN_moonraker)). With FLSun's own Moonraker, the button works as before and `UPDATE_ALL` says it's not supported.
+
 **You don't need to install the System updates.** With `flsun_moonraker`, the update manager also lists about 170 **System** packages: Debian 10's last security and bug-fix updates. The printer and the plugins work the same without them, so leaving them is fine. They're also safe to install while the printer is idle; FLSUN_moonraker holds back FLSun's own camera libraries, so three of them may stay listed. To hide the list, add `enable_system_updates: False` under `[update_manager]` in `moonraker.conf`. See [FLSUN_moonraker's notes](https://github.com/DIEHARDave/FLSUN_moonraker#system-packages).
 
 <img src="docs/update-manager.png" alt="Mainsail's Update Manager on a T1 Pro listing flsun_notify, flsun_remote_screen, flsun_timelapse, flsun_updater, Mainsail and the system packages, all up to date" width="600">
