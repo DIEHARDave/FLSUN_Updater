@@ -25,6 +25,7 @@ import time
 HOOKS_DIR = os.path.dirname(os.path.realpath(__file__))
 BOOT_SCRIPT = os.path.join(HOOKS_DIR, "helixscreen_startboot.sh")
 WIFI_SCRIPT_SRC = os.path.join(HOOKS_DIR, "helixscreen_wifi.sh")
+STOCK_SCRIPT = os.path.join(HOOKS_DIR, "flsun_startboot.sh")
 QT_DIR = "/home/pi/qt/out_linux"
 STARTBOOT = os.path.join(QT_DIR, "startboot.sh")
 WIFI_SCRIPT = os.path.join(QT_DIR, "helixscreen_wifi.sh")
@@ -195,10 +196,38 @@ def _restart_screen(spec, log):
 
 def _is_helix_script(path):
     try:
-        with open(path) as f:
-            return "helix-launcher" in f.read()
+        with open(path, "rb") as f:
+            return b"helix-launcher" in f.read()
     except OSError:
         return False
+
+
+def _is_stock_script(path):
+    """True if path is a non-empty script that starts FLSun's TUI."""
+    # Binary: FLSun's script has Chinese comments, and the service may run
+    # with an ASCII locale.
+    try:
+        with open(path, "rb") as f:
+            return b"out_linux/TUI" in f.read()
+    except OSError:
+        return False
+
+
+def _repair_stock_script(log):
+    """Some printers' startboot.sh was already empty before HelixScreen
+    went on, which left an empty startboot.sh.flsun and a screen stuck on
+    the boot logo. Puts back FLSun's stock script (hooks/flsun_startboot.sh,
+    copied from a T1 Pro) when the kept one is missing or broken."""
+    if _is_stock_script(STARTBOOT_FLSUN):
+        return
+    log("%s is missing or broken; putting back FLSun's stock script"
+        % STARTBOOT_FLSUN)
+    if os.path.exists(STARTBOOT_FLSUN):
+        shutil.copy2(STARTBOOT_FLSUN, STARTBOOT_FLSUN + ".broken")
+    tmp = STARTBOOT_FLSUN + ".tmp"
+    shutil.copyfile(STOCK_SCRIPT, tmp)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, STARTBOOT_FLSUN)
 
 
 def _write_script(src, dst):
@@ -228,8 +257,13 @@ def _install_boot_script(log):
     # The boot script runs the Wi-Fi script, so install that first.
     changed = _write_script(WIFI_SCRIPT_SRC, WIFI_SCRIPT)
     if os.path.exists(STARTBOOT) and not _is_helix_script(STARTBOOT):
-        log("Keeping FLSun's screen start script as " + STARTBOOT_FLSUN)
-        shutil.copy2(STARTBOOT, STARTBOOT_FLSUN)
+        if _is_stock_script(STARTBOOT):
+            log("Keeping FLSun's screen start script as " + STARTBOOT_FLSUN)
+            shutil.copy2(STARTBOOT, STARTBOOT_FLSUN)
+        else:
+            log("WARNING: %s is empty or doesn't start FLSun's screen; "
+                "not keeping it" % STARTBOOT)
+    _repair_stock_script(log)
     if _write_script(BOOT_SCRIPT, STARTBOOT):
         log("Setting the screen to start HelixScreen at boot")
         changed = True
@@ -251,12 +285,9 @@ def at_boot(spec, log):
 
 
 def before_remove(spec, log):
-    if os.path.exists(STARTBOOT_FLSUN):
-        log("Setting the screen to start FLSun's stock screen at boot")
-        shutil.copy2(STARTBOOT_FLSUN, STARTBOOT)
-    else:
-        log("WARNING: %s is missing; the screen will stay blank"
-            % STARTBOOT_FLSUN)
+    _repair_stock_script(log)
+    log("Setting the screen to start FLSun's stock screen at boot")
+    shutil.copy2(STARTBOOT_FLSUN, STARTBOOT)
     _stop_screen(spec["abspath"])
     cfg = os.path.join(spec["abspath"], "config")
     if os.path.isdir(cfg):
