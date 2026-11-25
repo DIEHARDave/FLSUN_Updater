@@ -68,6 +68,7 @@ Options starting with `flsun_` are read by FLSUN_Updater and never reach Moonrak
 | --- | --- |
 | `flsun_title` | Name shown in `flsun_plugins.cfg`. Defaults to `<name>`. |
 | `flsun_description` | One line shown in `flsun_plugins.cfg`. |
+| `flsun_retired` | `yes` for an archived plugin: it is listed only on printers where it is installed (or set to `yes`), so it can still be turned off there. Once it is removed, it disappears from `flsun_plugins.cfg` and the PLUGINS window. |
 | `flsun_install`, `flsun_uninstall` | `git_repo`: other script names, or `none`. Default `install.sh` and `uninstall.sh`, run when present. |
 | `flsun_owner` | `web`: `pi` (default) or `root`, the owner of the unpacked files. |
 | `flsun_hook` | `web`: a module in [hooks/](../hooks) that does the rest of the setup. It can define `post_extract(spec, old_root, new_root, log)`, called with the new release unpacked beside the old one (`old_root` may not exist on a first install); `after_install(spec, log)`, called after an install, update or rollback; `at_boot(spec, log)`, called on every run while installed; and `before_remove(spec, log)`. They run as root. |

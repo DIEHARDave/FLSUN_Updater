@@ -596,6 +596,9 @@ def load_registry():
             "uninstall": o.get("flsun_uninstall", "uninstall.sh"),
             "owner": o.get("flsun_owner", USER),
             "hook": hook,
+            # Listed only where it's installed (or chosen), so it can be
+            # turned off there; hidden everywhere else.
+            "retired": o.get("flsun_retired", "").strip().lower() in ("yes", "true", "1"),
             # What Moonraker gets: the section without the flsun_ options.
             "moonraker": [(k, v) for k, v in parser.items(section)
                           if not k.startswith("flsun_")],
@@ -1168,13 +1171,16 @@ def sync_plugins():
             % (os.path.basename(SELECTION), e))
         return
     installed = {p["name"]: is_installed(p, state) for p in plugins}
+    retired = set(p["name"] for p in plugins if p["retired"])
+    plugins = [p for p in plugins if p["name"] not in retired
+               or installed[p["name"]] or (selection or {}).get(p["name"])]
     choices, channels = {}, {}
     for p in plugins:
         wanted = None if selection is None else selection.get(p["name"])
         choices[p["name"]] = installed[p["name"]] if wanted is None else wanted
         if p["kind"] == "web":
             channels[p["name"]] = chosen_channels.get(p["name"], p["channel"])
-    for name in sorted(set(selection or {}) - set(choices)):
+    for name in sorted(set(selection or {}) - set(choices) - retired):
         log("%s: '%s' is not in the plugin list; ignored"
             % (os.path.basename(SELECTION), name))
     apply_recovery(plugins, choices)
