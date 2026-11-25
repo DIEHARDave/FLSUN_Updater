@@ -845,6 +845,14 @@ def install_git_plugin(p, state):
                            p["repo"], path], cwd=HOME, as_user=True):
             log("  could not download %s" % p["repo"])
             return False
+        if p["channel"] == "stable":
+            # Start on the newest release tag, as Moonraker's stable channel
+            # would, not on untested commits at the branch head.
+            tag = user_output(["git", "describe", "--tags", "--abbrev=0",
+                               "--match", "v[0-9]*"], path)
+            if tag and run_logged(["git", "reset", "-q", "--hard", tag],
+                                  cwd=path, as_user=True):
+                log("  on release %s" % tag)
     else:
         origin = user_output(["git", "remote", "get-url", "origin"], path)
         if origin is None or not same_repo(origin, p["repo"]):
