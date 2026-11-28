@@ -599,6 +599,9 @@ def load_registry():
             # Listed only where it's installed (or chosen), so it can be
             # turned off there; hidden everywhere else.
             "retired": o.get("flsun_retired", "").strip().lower() in ("yes", "true", "1"),
+            # A retired plugin's successor: where the old one is on, the
+            # next run removes it and installs this one instead.
+            "replaced_by": o.get("flsun_replaced_by", "").strip() or None,
             # What Moonraker gets: the section without the flsun_ options.
             "moonraker": [(k, v) for k, v in parser.items(section)
                           if not k.startswith("flsun_")],
@@ -1191,11 +1194,25 @@ def sync_plugins():
     for name in sorted(set(selection or {}) - set(choices) - retired):
         log("%s: '%s' is not in the plugin list; ignored"
             % (os.path.basename(SELECTION), name))
+    # Moved plugins: the old one goes, its successor comes in its place. The
+    # successor's installer runs even if it is already there, since the old
+    # uninstaller may remove files they share; the registry lists the old
+    # one first, so it is removed first.
+    reinstall = set()
+    for p in plugins:
+        new = p["replaced_by"]
+        if new and new in choices and choices[p["name"]]:
+            log("%s moved to %s; switching" % (p["title"], new))
+            choices[p["name"]] = False
+            choices[new] = True
+            if installed[p["name"]]:
+                reinstall.add(new)
     apply_recovery(plugins, choices)
     updates_off = read_updates_off()
     write_selection(plugins, choices, channels, updates_off)
 
-    todo = [p for p in plugins if choices[p["name"]] != installed[p["name"]]]
+    todo = [p for p in plugins if choices[p["name"]] != installed[p["name"]]
+            or p["name"] in reinstall]
     if todo:
         wait_moonraker(300)
         wait_until_idle()
